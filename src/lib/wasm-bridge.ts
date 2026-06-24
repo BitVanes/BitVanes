@@ -90,7 +90,8 @@ export async function processDocument(
   const id = nextId++;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    // Transfer the input bytes (no copy) into the worker.
-    getWorker().postMessage({ type: 'process', id, config, bytes }, [bytes]);
+    // Transfer the underlying ArrayBuffer (a Uint8Array view is not itself
+    // Transferable). The view is reconstructed on the worker side.
+    getWorker().postMessage({ type: 'process', id, config, bytes }, [bytes.buffer]);
   });
 }
