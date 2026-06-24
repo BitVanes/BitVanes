@@ -10,6 +10,7 @@ import {
 import {
   exportJSON,
   exportCSV,
+  exportJSONL,
   exportArrowIPC,
   exportProfile,
   importProfile,
@@ -84,6 +85,21 @@ function Tool({ onBack }: { onBack: () => void }) {
     } catch (e) {
       setError(`Could not import profile: ${e}`);
     }
+  }, []);
+
+  const updateCustom = useCallback((i: number, patch: Partial<{ regex: string; replacement: string }>) => {
+    setConfig((cfg) => {
+      const custom = cfg.scrub.custom.map((c, idx) => (idx === i ? { ...c, ...patch } : c));
+      return { ...cfg, scrub: { ...cfg.scrub, custom } };
+    });
+  }, []);
+
+  const addCustom = useCallback(() => {
+    setConfig((cfg) => ({ ...cfg, scrub: { ...cfg.scrub, custom: [...cfg.scrub.custom, { regex: '', replacement: '' }] } }));
+  }, []);
+
+  const removeCustom = useCallback((i: number) => {
+    setConfig((cfg) => ({ ...cfg, scrub: { ...cfg.scrub, custom: cfg.scrub.custom.filter((_, idx) => idx !== i) } }));
   }, []);
 
   const handleFile = useCallback(
@@ -232,6 +248,10 @@ function Tool({ onBack }: { onBack: () => void }) {
             <input type="range" min="64" max="2048" step="64" value={config.chunk.max_tokens}
               onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, max_tokens: Number(e.target.value) } })} />
           </label>
+          <label>Overlap: {config.chunk.overlap_tokens}
+            <input type="range" min="0" max="256" step="16" value={config.chunk.overlap_tokens}
+              onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, overlap_tokens: Number(e.target.value) } })} />
+          </label>
           <fieldset className="fieldset">
             <legend>PII Scrubbing</legend>
             {PII_PATTERNS.map((p) => (
@@ -244,6 +264,19 @@ function Tool({ onBack }: { onBack: () => void }) {
                 {p}
               </label>
             ))}
+            <div className="custom-regex">
+              <span className="custom-regex-title">Custom regex</span>
+              {config.scrub.custom.map((c, i) => (
+                <div className="custom-regex-row" key={i}>
+                  <input placeholder="regex (e.g. \\bPROJ-\\d+\\b)" value={c.regex}
+                    onChange={(e) => updateCustom(i, { regex: e.target.value })} />
+                  <input placeholder="replacement (e.g. [PROJ])" value={c.replacement}
+                    onChange={(e) => updateCustom(i, { replacement: e.target.value })} />
+                  <button className="btn-outline btn-tiny" onClick={() => removeCustom(i)}>✕</button>
+                </div>
+              ))}
+              <button className="btn-outline btn-tiny" onClick={addCustom}>+ add pattern</button>
+            </div>
           </fieldset>
         </div>
 
@@ -269,6 +302,7 @@ function Tool({ onBack }: { onBack: () => void }) {
               <button className="btn-outline" onClick={() => exportJSON(chunks, fileName)}>JSON</button>
               <button className="btn-outline" onClick={() => exportCSV(chunks, fileName)}>CSV</button>
               <button className="btn-outline" disabled={!tableRef.current} onClick={() => tableRef.current && exportArrowIPC(tableRef.current, fileName)}>Arrow IPC</button>
+              <button className="btn-outline" disabled={!embeddings} onClick={() => embeddings && exportJSONL(chunks, embeddings, fileName)}>JSONL + embeddings</button>
               <button className="btn-outline" onClick={() => exportProfile(config, fileName)}>Export Profile</button>
               <button className="btn-outline" onClick={() => profileInputRef.current?.click()}>Import Profile</button>
               <input ref={profileInputRef} type="file" accept=".json,application/json" style={{ display: 'none' }}

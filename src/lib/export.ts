@@ -77,6 +77,36 @@ export function exportCSV(chunks: ChunkRow[], fileName: string): void {
   );
 }
 
+/** Downloads chunks + their embeddings as JSONL (one record per line).
+ *  Each record: { chunk_index, text, token_count, heading_path, section_kind,
+ *                 source_path, embedding: number[] }. */
+export function exportJSONL(
+  chunks: ChunkRow[],
+  embeddings: number[][],
+  fileName: string,
+): void {
+  if (chunks.length !== embeddings.length) {
+    throw new Error(
+      `chunk count (${chunks.length}) != embedding count (${embeddings.length})`,
+    );
+  }
+  const lines = chunks.map((c, i) =>
+    JSON.stringify({
+      chunk_index: c.chunk_index,
+      text: c.text,
+      token_count: c.token_count,
+      heading_path: c.heading_path,
+      section_kind: c.section_kind,
+      source_path: c.source_path,
+      embedding: embeddings[i],
+    }),
+  );
+  downloadBlob(
+    new Blob([lines.join('\n')], { type: 'application/x-ndjson' }),
+    `${baseName(fileName)}.chunks.jsonl`,
+  );
+}
+
 /** Downloads the Arrow IPC bytes as a .arrow file. */
 export function exportArrowIPC(arrowBytes: Uint8Array, fileName: string): void {
   // Copy into a fresh ArrayBuffer-backed Uint8Array (Blob rejects SharedArrayBuffer).

@@ -8,7 +8,12 @@
 export interface PipelineConfig {
   format: string;
   scrub: { patterns: string[]; custom: { regex: string; replacement: string }[] };
-  chunk: { max_tokens: number; overlap_tokens: number; tokenizer: string };
+  chunk: {
+    max_tokens: number;
+    overlap_tokens: number;
+    tokenizer: string;
+    strategy?: { structural?: unknown } | { semantic: { similarity_threshold: number } };
+  };
   source_label?: string;
 }
 
@@ -19,6 +24,9 @@ export interface ChunkRow {
   source_path: string;
   heading_path: string[];
   section_kind: string;
+  /** Half-open [start, end) char offsets into the scrubbed document text. */
+  char_offset_start: number;
+  char_offset_end: number;
 }
 
 type Res =

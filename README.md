@@ -24,13 +24,14 @@ processed entirely in your browser; nothing is uploaded to a server.
 ## Features
 
 - Drag-and-drop upload (`.pdf`, `.md`, `.txt`, `.html`, `.json`)
-- Format / tokenizer / max-tokens / PII-scrub configuration
+- Format / tokenizer / max-tokens / **overlap** / PII-scrub configuration
+- **Custom regex PII patterns** (regex + replacement, arbitrary count)
 - Chunk preview table with heading ancestry and section kind
 - Token-distribution histogram
-- Export to **JSON**, **CSV**, or **Arrow IPC**
+- Export to **JSON**, **CSV**, **Arrow IPC**, or **JSONL with embeddings**
 - **Profile export/import** — a profile JSON that `bitvanes-cli` replays
   byte-for-byte (`bitvanes -c profile.json -i ./docs/`)
-- On-device embedding generation
+- On-device embedding generation (all-MiniLM-L6-v2, 384-dim)
 - Sync embeddings + chunks to a vector DB
 
 ## Vector database support

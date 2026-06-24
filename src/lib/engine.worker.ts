@@ -107,6 +107,8 @@ async function run(config: PipelineConfig, bytes: Uint8Array): Promise<{ chunks:
       source_path: colGet(batch.getChildAt(3), i, ''),
       heading_path: readHeading(batch.getChildAt(4), i),
       section_kind: readSection(batch.getChildAt(5), i),
+      char_offset_start: colGet(batch.getChildAt(6), i, 0),
+      char_offset_end: colGet(batch.getChildAt(7), i, 0),
     });
   }
 
