@@ -176,6 +176,15 @@ table tbody tr:hover { background: var(--bg-elevated); }
 .col-heading { font-size: 12px; color: var(--text-muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-kind { font-family: var(--mono); font-size: 11px; color: var(--accent); width: 90px; }
 .truncated { text-align: center; color: var(--text-muted); padding: 12px; font-size: 13px; }
+.engine-version { margin-top: 32px; text-align: center; font-family: var(--mono); font-size: 11px; color: var(--text-muted); opacity: 0.7; }
+.export-bar button[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+.histogram { margin-top: 20px; padding: 16px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+.histogram-title { font-size: 13px; color: var(--text-muted); margin-bottom: 12px; }
+.histogram-bars { display: flex; align-items: flex-end; gap: 8px; height: 96px; }
+.histogram-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.histogram-bar { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.2s; }
+.histogram-count { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
 
 @media (max-width: 640px) {
   .tool-body { padding: 16px; }

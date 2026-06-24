@@ -1,19 +1,67 @@
 # @BitVanes/web
 
-The visual ETL studio and user dashboard for BitVanes. This is a local-first web application that allows users to drag-and-drop massive files, configure semantic chunking profiles, and view real-time token distribution without ever uploading data to a third-party server.
+The visual ETL studio for BitVanes — a local-first web app that lets you
+drag-and-drop documents, configure semantic chunking profiles, view token
+distribution, and export results or sync them to a vector database. Files are
+processed entirely in your browser; nothing is uploaded to a server.
 
-## Key Responsibilities
-* **UI/UX Layer:** Provide a clean dashboard for designing "chunking logic profiles".
-* **Web Worker Orchestration:** Spin up background worker threads to run the compiled `@bitvanes/core` Wasm engine without blocking the browser UI thread.
-* **Database Destination Ingestion:** Direct client-side streaming of finalized token chunks to vector databases (Pinecone, Qdrant, Supabase, etc.).
+## Architecture
 
-## Technical Stack
-* **Framework:** Vite + TypeScript + React/Vue (or chosen SPA framework)
-* **Styling:** TailwindCSS
-* **Core Engine:** WebAssembly binary compiled from `BitVanes/core`
+- **Framework:** Vite 6 + TypeScript + React 19.
+- **Engine:** the `@bitvanes/core` WebAssembly binary (compiled from Rust).
+- **Styling:** hand-written CSS with a small design-token system
+  (`src/index.css`) — **not** Tailwind.
+- **Off-main-thread processing:** the wasm engine runs inside a dedicated
+  [`Web Worker`](src/lib/engine.worker.ts) so large documents never block the
+  UI. Arrow data is read via zero-copy FFI (`arrow-js-ffi`) inside the worker,
+  then returned to the main thread as plain JS values.
+- **PDF:** Mozilla PDF.js extracts text client-side (`src/lib/pdf.ts`) before
+  the engine sees it (text-layer only; scanned image PDFs are unsupported).
+- **Embeddings:** on-device via `@xenova/transformers` (all-MiniLM-L6-v2,
+  384-dim), downloaded and cached in the browser.
+- **Vector DB sync:** direct browser `fetch` to a user-supplied database.
 
-## Getting Started
+## Features
+
+- Drag-and-drop upload (`.pdf`, `.md`, `.txt`, `.html`, `.json`)
+- Format / tokenizer / max-tokens / PII-scrub configuration
+- Chunk preview table with heading ancestry and section kind
+- Token-distribution histogram
+- Export to **JSON**, **CSV**, or **Arrow IPC**
+- **Profile export/import** — a profile JSON that `bitvanes-cli` replays
+  byte-for-byte (`bitvanes -c profile.json -i ./docs/`)
+- On-device embedding generation
+- Sync embeddings + chunks to a vector DB
+
+## Vector database support
+
+| Provider | Browser `fetch` | Notes |
+|----------|-----------------|-------|
+| **Qdrant** | ✅ Works | Sends permissive CORS headers; collection auto-created. |
+| **Pinecone** | ⚠️ CORS-limited | The data plane generally does not allow direct browser `fetch`; route through a proxy/edge function for production. |
+
+API keys are held in memory only and never persisted. (Supabase is not
+currently wired up.)
+
+## Getting started
+
 ```bash
 npm install
+npm run sync-wasm   # copy the rebuilt @bitvanes/core wasm pkg into src/wasm/
 npm run dev
 ```
+
+Build for production:
+
+```bash
+npm run build      # tsc -b && vite build
+npm run preview
+```
+
+## Notes
+
+- Cross-origin isolation (COOP/COEP) is intentionally **not** enabled in dev,
+  because it would block the cross-origin Xenova model download. Single-threaded
+  wasm + onnxruntime-web run fine without SharedArrayBuffer.
+- The wasm binary lives under `src/wasm/` (gitignored build artifact) and is
+  refreshed from `../core/crates/wasm/pkg` via `npm run sync-wasm`.

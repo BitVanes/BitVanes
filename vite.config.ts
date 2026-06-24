@@ -4,13 +4,12 @@ import react from '@vitejs/plugin-react';
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // Required for SharedArrayBuffer (future multi-threaded wasm).
-  // Not needed for MVP single-threaded mode.
+  // Cross-origin isolation (COOP/COEP) is NOT enabled: it would block the
+  // cross-origin Xenova ONNX model download from the HuggingFace CDN in dev.
+  // Single-threaded wasm + onnxruntime-web work without SharedArrayBuffer.
+  // To enable SAB multi-threading later, set COEP to "credentialless" and
+  // COOP to "same-origin" (credentialless keeps cross-origin CDN loads working).
   server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
     fs: {
       // Allow importing from the sibling core repo.
       allow: ['..'],

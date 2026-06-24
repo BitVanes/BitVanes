@@ -4,11 +4,16 @@ import {
   ensureInitialized,
   getVersion,
   processDocument,
-  releaseSlot,
   type PipelineConfig,
   type ChunkRow,
 } from './lib/wasm-bridge';
-import { exportJSON, exportArrowIPC, exportProfile } from './lib/export';
+import {
+  exportJSON,
+  exportCSV,
+  exportArrowIPC,
+  exportProfile,
+  importProfile,
+} from './lib/export';
 import { extractPdfText } from './lib/pdf';
 import {
   ensureEmbedder,
@@ -22,13 +27,15 @@ import {
   type SyncProgress,
 } from './lib/vector-db';
 
+type ArrowBytes = Uint8Array;
+
 const DEFAULT_CONFIG: PipelineConfig = {
   format: 'markdown',
   scrub: { patterns: ['email'], custom: [] },
   chunk: { max_tokens: 512, overlap_tokens: 0, tokenizer: 'cl100k_base' },
 };
 
-const FORMATS = ['markdown', 'text', 'html'] as const;
+const FORMATS = ['markdown', 'text', 'html', 'json'] as const;
 const TOKENIZERS = ['cl100k_base', 'o200k_base', 'r50k_base', 'p50k_base', 'p50k_edit', 'o200k_harmony'] as const;
 const PII_PATTERNS = ['email', 'ssn', 'phone', 'credit_card', 'aws_key', 'github_pat', 'jwt'] as const;
 
@@ -50,7 +57,8 @@ function Tool({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const currentSlot = useRef<number | null>(null);
+  const profileInputRef = useRef<HTMLInputElement>(null);
+  const tableRef = useRef<ArrowBytes | null>(null);
 
   const [embedStatus, setEmbedStatus] = useState<EmbeddingStatus>({ phase: 'idle' });
   const [embeddings, setEmbeddings] = useState<number[][] | null>(null);
@@ -68,12 +76,22 @@ function Tool({ onBack }: { onBack: () => void }) {
       .catch((e) => { setErrorMsg(String(e)); setInitState('error'); });
   }, []);
 
+  const handleImportProfile = useCallback(async (file: File) => {
+    try {
+      const imported = await importProfile(file);
+      setConfig(imported);
+      setError(null);
+    } catch (e) {
+      setError(`Could not import profile: ${e}`);
+    }
+  }, []);
+
   const handleFile = useCallback(
     async (file: File) => {
       setLoading(true);
       setError(null);
       setFileName(file.name);
-      if (currentSlot.current !== null) { releaseSlot(currentSlot.current); currentSlot.current = null; }
+      tableRef.current = null;
       setChunks([]);
       setEmbeddings(null);
       setEmbedStatus({ phase: 'idle' });
@@ -93,9 +111,9 @@ function Tool({ onBack }: { onBack: () => void }) {
           engineFormat = 'markdown';
         } else {
           if (fileBytes.length >= 2 && fileBytes[0] === 0x50 && fileBytes[1] === 0x4b)
-            throw new Error('Office documents not supported. Use .pdf, .md, .txt, or .html.');
+            throw new Error('Office documents not supported. Use .pdf, .md, .txt, .html, or .json.');
           try { new TextDecoder('utf-8', { fatal: true }).decode(fileBytes.slice(0, 4096)); }
-          catch { throw new Error(`"${file.name}" is not a text file. Supported: .pdf, .md, .txt, .html`); }
+          catch { throw new Error(`"${file.name}" is not a text file. Supported: .pdf, .md, .txt, .html, .json`); }
           engineBytes = fileBytes;
           engineFormat = config.format;
         }
@@ -103,7 +121,7 @@ function Tool({ onBack }: { onBack: () => void }) {
         const cfg: PipelineConfig = { ...config, format: engineFormat as PipelineConfig['format'], source_label: file.name };
         const result = await processDocument(cfg, engineBytes);
         setChunks(result.chunks);
-        currentSlot.current = result.slotId;
+        tableRef.current = result.arrowBytes;
       } catch (e) {
         setError(String(e));
         setChunks([]);
@@ -133,17 +151,36 @@ function Tool({ onBack }: { onBack: () => void }) {
     setSyncing(true); setError(null);
     setSyncProgress({ synced: 0, total: chunks.length, failed: 0 });
     try {
-      await syncToVectorDB(
+      const { synced, failed } = await syncToVectorDB(
         chunks.map((c) => ({ chunk_index: c.chunk_index, text: c.text, token_count: c.token_count, heading_path: c.heading_path, section_kind: c.section_kind, source_path: c.source_path })),
         embeddings, dbConfig, (p) => setSyncProgress(p),
       );
-      const failedCount = syncProgress?.failed ?? 0;
-      setSyncProgress({ synced: syncProgress?.synced ?? 0, total: chunks.length, failed: failedCount, message: `Done! ${syncProgress?.synced ?? 0} chunks synced${failedCount > 0 ? `, ${failedCount} failed` : ''}.` });
+      setSyncProgress({
+        synced,
+        total: chunks.length,
+        failed,
+        message: `Done! ${synced} chunks synced${failed > 0 ? `, ${failed} failed` : ''}.`,
+      });
     } catch (e) { setError(`Sync error: ${e}`); }
     finally { setSyncing(false); }
-  }, [chunks, embeddings, dbConfig, syncProgress]);
+  }, [chunks, embeddings, dbConfig]);
 
   const totalTokens = chunks.reduce((sum, c) => sum + c.token_count, 0);
+
+  /** Builds a bucketed histogram of per-chunk token counts. */
+  const histogram = (() => {
+    if (chunks.length === 0) return null;
+    const counts = chunks.map((c) => c.token_count);
+    const max = Math.max(...counts, 1);
+    const buckets = 8;
+    const bins = new Array(buckets).fill(0);
+    for (const t of counts) {
+      const idx = Math.min(buckets - 1, Math.floor((t / max) * buckets));
+      bins[idx]++;
+    }
+    const maxBin = Math.max(...bins, 1);
+    return { bins, max, maxBin, buckets };
+  })();
 
   // Loading state while wasm initializes.
   if (initState === 'loading') {
@@ -230,8 +267,12 @@ function Tool({ onBack }: { onBack: () => void }) {
 
             <div className="export-bar">
               <button className="btn-outline" onClick={() => exportJSON(chunks, fileName)}>JSON</button>
-              <button className="btn-outline" onClick={() => currentSlot.current !== null && exportArrowIPC(currentSlot.current, fileName)}>Arrow IPC</button>
-              <button className="btn-outline" onClick={() => exportProfile(config, fileName)}>Profile</button>
+              <button className="btn-outline" onClick={() => exportCSV(chunks, fileName)}>CSV</button>
+              <button className="btn-outline" disabled={!tableRef.current} onClick={() => tableRef.current && exportArrowIPC(tableRef.current, fileName)}>Arrow IPC</button>
+              <button className="btn-outline" onClick={() => exportProfile(config, fileName)}>Export Profile</button>
+              <button className="btn-outline" onClick={() => profileInputRef.current?.click()}>Import Profile</button>
+              <input ref={profileInputRef} type="file" accept=".json,application/json" style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportProfile(f); e.target.value = ''; }} />
             </div>
 
             {embedStatus.phase === 'idle' && (
@@ -296,8 +337,28 @@ function Tool({ onBack }: { onBack: () => void }) {
               </table>
               {chunks.length > 200 && <p className="truncated">Showing first 200 of {chunks.length}</p>}
             </div>
+
+            {histogram && (
+              <div className="histogram">
+                <div className="histogram-title">Token distribution</div>
+                <div className="histogram-bars">
+                  {histogram.bins.map((n, i) => {
+                    const lo = Math.round((i / histogram.buckets) * histogram.max);
+                    const hi = Math.round(((i + 1) / histogram.buckets) * histogram.max);
+                    return (
+                      <div className="histogram-col" key={i} title={`${lo}–${hi} tokens: ${n} chunks`}>
+                        <div className="histogram-bar" style={{ height: `${(n / histogram.maxBin) * 100}%` }} />
+                        <span className="histogram-count">{n}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
+
+        <footer className="engine-version">engine v{getVersion()}</footer>
       </div>
     </div>
   );

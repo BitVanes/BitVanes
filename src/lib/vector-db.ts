@@ -30,13 +30,17 @@ interface ChunkPayload {
 
 const BATCH_SIZE = 50;
 
-/** Upserts chunks + embeddings to the configured vector database. */
+/** Upserts chunks + embeddings to the configured vector database.
+ *
+ * @returns the final `{ synced, failed }` counts so callers can render a
+ *   summary banner without reading stale progress state.
+ */
 export async function syncToVectorDB(
   chunks: ChunkPayload[],
   embeddings: number[][],
   config: VectorDBConfig,
   onProgress?: (p: SyncProgress) => void,
-): Promise<void> {
+): Promise<{ synced: number; failed: number }> {
   if (chunks.length !== embeddings.length) {
     throw new Error(
       `Chunk count (${chunks.length}) does not match embedding count (${embeddings.length})`,
@@ -46,10 +50,9 @@ export async function syncToVectorDB(
   if (!config.collection) throw new Error('Collection name is required');
 
   if (config.provider === 'qdrant') {
-    await syncQdrant(chunks, embeddings, config, onProgress);
-  } else {
-    await syncPinecone(chunks, embeddings, config, onProgress);
+    return syncQdrant(chunks, embeddings, config, onProgress);
   }
+  return syncPinecone(chunks, embeddings, config, onProgress);
 }
 
 async function syncQdrant(
@@ -57,7 +60,7 @@ async function syncQdrant(
   embeddings: number[][],
   config: VectorDBConfig,
   onProgress?: (p: SyncProgress) => void,
-): Promise<void> {
+): Promise<{ synced: number; failed: number }> {
   let synced = 0;
   let failed = 0;
 
@@ -116,6 +119,7 @@ async function syncQdrant(
 
     onProgress?.({ synced, total: chunks.length, failed });
   }
+  return { synced, failed };
 }
 
 async function syncPinecone(
@@ -123,7 +127,7 @@ async function syncPinecone(
   embeddings: number[][],
   config: VectorDBConfig,
   onProgress?: (p: SyncProgress) => void,
-): Promise<void> {
+): Promise<{ synced: number; failed: number }> {
   let synced = 0;
   let failed = 0;
 
@@ -165,6 +169,7 @@ async function syncPinecone(
 
     onProgress?.({ synced, total: chunks.length, failed });
   }
+  return { synced, failed };
 }
 
 function jsonHeaders(config: VectorDBConfig): Record<string, string> {

@@ -6,8 +6,7 @@
  * - Profile: pipeline config JSON. CLI replay (Milestone 4 contract).
  */
 
-import { RecordBatchStreamWriter } from 'apache-arrow';
-import { getArrowTable, type ChunkRow, type PipelineConfig } from './wasm-bridge';
+import type { ChunkRow, PipelineConfig } from './wasm-bridge';
 
 /** Triggers a browser download of a Blob with the given filename. */
 function downloadBlob(blob: Blob, filename: string): void {
@@ -26,6 +25,13 @@ function baseName(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '') || 'document';
 }
 
+/** Quotes a CSV cell per RFC 4180. */
+function csvCell(v: unknown): string {
+  const s = v == null ? '' : String(v);
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
 /** Downloads chunks as a JSON file. */
 export function exportJSON(chunks: ChunkRow[], fileName: string): void {
   const data = chunks.map((c) => ({
@@ -42,14 +48,40 @@ export function exportJSON(chunks: ChunkRow[], fileName: string): void {
   );
 }
 
-/** Downloads the Arrow RecordBatch as an IPC stream file (.arrow). */
-export function exportArrowIPC(slotId: number, fileName: string): void {
-  const table = getArrowTable(slotId);
-  const writer = RecordBatchStreamWriter.writeAll(table);
-  const bytes = writer.toUint8Array(true);
+/** Downloads chunks as a CSV file (heading_path joined for flatness). */
+export function exportCSV(chunks: ChunkRow[], fileName: string): void {
+  const header = [
+    'chunk_index',
+    'text',
+    'token_count',
+    'source_path',
+    'heading_path',
+    'section_kind',
+  ];
+  const rows = chunks.map((c) =>
+    [
+      c.chunk_index,
+      c.text,
+      c.token_count,
+      c.source_path,
+      c.heading_path.join(' › '),
+      c.section_kind,
+    ]
+      .map(csvCell)
+      .join(','),
+  );
+  const csv = [header.join(','), ...rows].join('\n');
+  downloadBlob(
+    new Blob([csv], { type: 'text/csv' }),
+    `${baseName(fileName)}.chunks.csv`,
+  );
+}
+
+/** Downloads the Arrow IPC bytes as a .arrow file. */
+export function exportArrowIPC(arrowBytes: Uint8Array, fileName: string): void {
   // Copy into a fresh ArrayBuffer-backed Uint8Array (Blob rejects SharedArrayBuffer).
   downloadBlob(
-    new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }),
+    new Blob([new Uint8Array(arrowBytes)], { type: 'application/octet-stream' }),
     `${baseName(fileName)}.arrow`,
   );
 }
@@ -66,4 +98,14 @@ export function exportProfile(config: PipelineConfig, fileName: string): void {
     new Blob([json], { type: 'application/json' }),
     `${baseName(fileName)}.profile.json`,
   );
+}
+
+/** Parses a profile.json File into a PipelineConfig (for profile import). */
+export async function importProfile(file: File): Promise<PipelineConfig> {
+  const text = await file.text();
+  const parsed = JSON.parse(text) as Partial<PipelineConfig>;
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error('Profile is not a JSON object');
+  }
+  return parsed as PipelineConfig;
 }
