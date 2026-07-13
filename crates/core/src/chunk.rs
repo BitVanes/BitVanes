@@ -371,7 +371,8 @@ fn split_oversized_span(
         let total_tokens = tokenizer.count(&text);
 
         out.push(ChunkSpec {
-            chunk_index: 0, // re-indexed by caller
+            chunk_index: 0,          // re-indexed by caller
+            chunk_id: String::new(), // filled by pipeline's attach_metadata
             text,
             token_count: u16::try_from(total_tokens).map_err(|_| {
                 BitVanesError::InvalidInput("token count overflowed u16".to_string())
@@ -381,6 +382,7 @@ fn split_oversized_span(
             section_kind: span.section_kind,
             char_offset_start: offset_to_u32(start_off),
             char_offset_end: offset_to_u32(end_off),
+            pii: Vec::new(), // filled by pipeline's attach_metadata
         });
 
         cursor += split_at;
@@ -495,6 +497,7 @@ impl ChunkAccum {
         let actual_tokens = tokenizer.count(&text);
         ChunkSpec {
             chunk_index: 0,
+            chunk_id: String::new(), // filled by pipeline's attach_metadata
             text,
             token_count: u16::try_from(actual_tokens).unwrap_or(u16::MAX),
             source_path: source.to_string(),
@@ -502,6 +505,7 @@ impl ChunkAccum {
             section_kind: self.section_kind.unwrap_or(SectionKind::Paragraph),
             char_offset_start: offset_to_u32(self.start_offset),
             char_offset_end: offset_to_u32(self.end_offset),
+            pii: Vec::new(), // filled by pipeline's attach_metadata
         }
     }
 }

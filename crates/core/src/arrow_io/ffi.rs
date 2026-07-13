@@ -147,6 +147,7 @@ mod tests {
                 let idx = u32::try_from(i).expect("test index fits in u32");
                 ChunkSpec {
                     chunk_index: idx,
+                    chunk_id: format!("id{i}"),
                     text: format!("chunk {i}"),
                     token_count: 2,
                     source_path: "test.md".to_string(),
@@ -154,6 +155,7 @@ mod tests {
                     section_kind: SectionKind::Paragraph,
                     char_offset_start: idx * 10,
                     char_offset_end: idx * 10 + 8,
+                    pii: vec![],
                 }
             })
             .collect();

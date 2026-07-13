@@ -21,11 +21,26 @@ fn main() -> bitvanes_core::Result<()> {
             BuiltInPattern::Phone,
             BuiltInPattern::Ssn,
         ],
-        custom: vec![],
+        ..ScrubProfile::default()
     };
-    let (scrubbed, _offset_map) = scrub_document(doc, &profile)?;
+    let (scrubbed, offset_map, findings) = scrub_document(doc, &profile)?;
 
     println!("scrubbed text:\n  {}\n", scrubbed.full_text);
+    println!(
+        "  {} finding(s) emitted (offsets into original text):",
+        findings.len()
+    );
+    for f in &findings {
+        println!(
+            "    {entity:>14}  conf={conf:.2}  [{s}..{e}]  anchors={anchors:?}",
+            entity = f.entity,
+            conf = f.confidence,
+            s = f.offset_start,
+            e = f.offset_end,
+            anchors = f.anchors_hit,
+        );
+    }
+    let _ = offset_map;
 
     let chunks = chunk_document(
         &scrubbed,

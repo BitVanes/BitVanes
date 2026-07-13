@@ -55,6 +55,13 @@ jobs:
         uses: jetli/wasm-pack-action@v0.4.0
       - name: Build wasm
         run: wasm-pack build crates/wasm --target web --out-dir pkg
+      - name: Assert SIMD enabled
+        run: |
+          if ! grep -q "simd128" crates/wasm/pkg/bitvanes_wasm_bg.wasm; then
+            echo "::error::simd128 target feature not found in wasm binary — check .cargo/config.toml"
+            exit 1
+          fi
+          echo "✓ simd128 feature confirmed in wasm binary"
       - name: Check gzipped size (target <= 5 MB)
         run: |
           bytes=$(gzip -c crates/wasm/pkg/bitvanes_wasm_bg.wasm | wc -c)

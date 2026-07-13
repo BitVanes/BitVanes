@@ -31,6 +31,72 @@ pub fn write_ipc_stream(batch: &RecordBatch) -> Result<Vec<u8>> {
     Ok(buffer)
 }
 
+/// Writes a single [`RecordBatch`] to an open writer in Arrow IPC streaming
+/// format. Call this once per file in batch mode to stream results to disk
+/// or stdout without buffering the entire output in memory.
+///
+/// The caller is responsible for:
+/// 1. Calling [`start_ipc_stream`] once before the first batch.
+/// 2. Calling [`finish_ipc_stream`] once after the last batch.
+///
+/// # Errors
+///
+/// Returns [`crate::error::BitVanesError::Arrow`] on write failure.
+pub fn write_ipc_stream_to<W: std::io::Write>(batch: &RecordBatch, writer: &mut W) -> Result<()> {
+    writer.write_all(&write_ipc_stream(batch)?).map_err(|e| {
+        crate::error::BitVanesError::InvalidInput(format!("ipc stream write error: {e}"))
+    })?;
+    Ok(())
+}
+
+/// Creates a streaming IPC writer over an open writer. The writer emits the
+/// schema immediately, then one record-batch message per `write()` call,
+/// and an EOS marker on `finish()`.
+///
+/// This is the preferred API for streaming batch output in the CLI:
+/// ```
+/// # use bitvanes_core::arrow_io::ipc::IpcStream;
+/// # use bitvanes_core::arrow_io::batch::chunks_to_batch;
+/// // let mut stream = IpcStream::try_new(File::create("out.arrow")?, &schema)?;
+/// // for file in files { let batch = process(file)?; stream.write(&batch)?; }
+/// // stream.finish()?;
+/// ```
+pub struct IpcStream<W: std::io::Write> {
+    writer: StreamWriter<W>,
+}
+
+impl<W: std::io::Write> IpcStream<W> {
+    /// Creates a new IPC stream writer, emitting the schema header immediately.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::BitVanesError::Arrow`] on failure.
+    pub fn try_new(w: W, schema: &arrow::datatypes::SchemaRef) -> Result<Self> {
+        let writer = StreamWriter::try_new(w, schema)?;
+        Ok(Self { writer })
+    }
+
+    /// Writes one record-batch message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::BitVanesError::Arrow`] on failure.
+    pub fn write(&mut self, batch: &RecordBatch) -> Result<()> {
+        self.writer.write(batch)?;
+        Ok(())
+    }
+
+    /// Writes the end-of-stream marker and flushes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::BitVanesError::Arrow`] on failure.
+    pub fn finish(mut self) -> Result<()> {
+        self.writer.finish()?;
+        Ok(())
+    }
+}
+
 /// Rough size estimate for pre-allocation.
 fn estimate_ipc_size(batch: &RecordBatch) -> usize {
     let data_size: usize = batch
@@ -51,6 +117,7 @@ mod tests {
     fn sample_batch() -> RecordBatch {
         let chunks = vec![ChunkSpec {
             chunk_index: 0,
+            chunk_id: "a".to_string(),
             text: "Hello world.".to_string(),
             token_count: 3,
             source_path: "test.md".to_string(),
@@ -58,6 +125,7 @@ mod tests {
             section_kind: SectionKind::Paragraph,
             char_offset_start: 0,
             char_offset_end: 12,
+            pii: vec![],
         }];
         chunks_to_batch(&chunks).expect("batch should build")
     }

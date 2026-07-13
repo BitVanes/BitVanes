@@ -12,24 +12,26 @@ use crate::embed::Embedder;
 use crate::error::Result;
 use crate::parse::parse_bytes;
 use crate::schema::{ChunkStrategy, PipelineConfig};
-use crate::scrub::scrub_document;
+use crate::scrub::{OffsetMap, PiiFinding, scrub_document};
 
 /// Runs the full ETL pipeline on `bytes` and returns an Arrow
 /// [`RecordBatch`] containing the chunked output.
 ///
 /// Stages:
 /// 1. Parse raw bytes into a [`Document`] via the configured format.
-/// 2. Scrub PII via the configured [`ScrubProfile`].
+/// 2. Scrub PII via the configured [`ScrubProfile`] (emits findings + offsets).
 /// 3. Chunk the scrubbed text via BPE token boundaries.
-/// 4. Assemble chunks into an Arrow `RecordBatch`.
+/// 4. Attach per-chunk PII findings + deterministic `chunk_id`.
+/// 5. Assemble chunks into an Arrow `RecordBatch`.
 ///
 /// # Errors
 ///
 /// Propagates [`crate::error::BitVanesError`] from any stage.
 pub fn run_pipeline(bytes: &[u8], cfg: &PipelineConfig) -> Result<RecordBatch> {
     let doc = parse_bytes(bytes, cfg)?;
-    let (scrubbed_doc, _offset_map) = scrub_document(doc, &cfg.scrub)?;
-    let chunks = chunk_document(&scrubbed_doc, &cfg.chunk, cfg.source_label.as_deref())?;
+    let (scrubbed_doc, offset_map, findings) = scrub_document(doc, &cfg.scrub)?;
+    let mut chunks = chunk_document(&scrubbed_doc, &cfg.chunk, cfg.source_label.as_deref())?;
+    attach_metadata(&mut chunks, &findings, &offset_map);
     let batch = chunks_to_batch(&chunks)?;
     Ok(batch)
 }
@@ -52,8 +54,9 @@ pub fn run_pipeline_with_embeddings(
     embedder: &dyn Embedder,
 ) -> Result<RecordBatch> {
     let doc = parse_bytes(bytes, cfg)?;
-    let (scrubbed_doc, _offset_map) = scrub_document(doc, &cfg.scrub)?;
-    let chunks = chunk_document(&scrubbed_doc, &cfg.chunk, cfg.source_label.as_deref())?;
+    let (scrubbed_doc, offset_map, findings) = scrub_document(doc, &cfg.scrub)?;
+    let mut chunks = chunk_document(&scrubbed_doc, &cfg.chunk, cfg.source_label.as_deref())?;
+    attach_metadata(&mut chunks, &findings, &offset_map);
 
     let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
     let embeddings = embedder.embed(&texts)?;
@@ -77,8 +80,8 @@ pub fn run_pipeline_with_strategy(
     embedder: &dyn Embedder,
 ) -> Result<RecordBatch> {
     let doc = parse_bytes(bytes, cfg)?;
-    let (scrubbed_doc, _offset_map) = scrub_document(doc, &cfg.scrub)?;
-    let chunks = match cfg.chunk.strategy {
+    let (scrubbed_doc, offset_map, findings) = scrub_document(doc, &cfg.scrub)?;
+    let mut chunks = match cfg.chunk.strategy {
         ChunkStrategy::Structural => {
             chunk_document(&scrubbed_doc, &cfg.chunk, cfg.source_label.as_deref())?
         }
@@ -89,6 +92,7 @@ pub fn run_pipeline_with_strategy(
             cfg.source_label.as_deref(),
         )?,
     };
+    attach_metadata(&mut chunks, &findings, &offset_map);
     let batch = chunks_to_batch(&chunks)?;
     Ok(batch)
 }
@@ -110,6 +114,43 @@ pub fn run_pipeline_batch(inputs: &[&[u8]], cfg: &PipelineConfig) -> Vec<Result<
     #[cfg(not(feature = "parallel"))]
     {
         inputs.iter().map(|b| run_pipeline(b, cfg)).collect()
+    }
+}
+
+/// Computes a deterministic `chunk_id` (blake3 hex) and attaches the PII
+/// findings whose original-text ranges overlap each chunk.
+///
+/// `findings` carry offsets into the **original** (pre-scrub) text; chunk
+/// offsets reference the **scrubbed** text. The `offset_map` projects chunk
+/// offsets back into original-text space to perform the overlap test.
+///
+/// Exposed publicly so non-Arrow code paths (e.g. the wasm serde fallback)
+/// can attach the same metadata as the primary batch path.
+pub fn attach_metadata(
+    chunks: &mut [crate::schema::ChunkSpec],
+    findings: &[PiiFinding],
+    offset_map: &OffsetMap,
+) {
+    for chunk in chunks {
+        // Map chunk's scrubbed-text range back to original-text coordinates.
+        let orig_start = offset_map.project_inverse(chunk.char_offset_start as usize);
+        let orig_end = offset_map.project_inverse(chunk.char_offset_end as usize);
+
+        chunk.pii = findings
+            .iter()
+            .filter(|f| {
+                (f.offset_start as usize) < orig_end && (f.offset_end as usize) > orig_start
+            })
+            .cloned()
+            .collect();
+
+        // Deterministic content-addressed ID: blake3(text || source || offsets).
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(chunk.text.as_bytes());
+        hasher.update(chunk.source_path.as_bytes());
+        hasher.update(&chunk.char_offset_start.to_le_bytes());
+        hasher.update(&chunk.char_offset_end.to_le_bytes());
+        chunk.chunk_id = hasher.finalize().to_hex().to_string();
     }
 }
 
@@ -153,7 +194,9 @@ mod batch_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{ChunkConfig, DocumentFormat, PipelineConfig, ScrubProfile};
+    use crate::schema::{
+        BuiltInPattern, ChunkConfig, DocumentFormat, PipelineConfig, ScrubProfile,
+    };
 
     #[test]
     fn pipeline_produces_nonempty_batch_from_markdown() {
@@ -170,7 +213,7 @@ mod tests {
         let input = b"# Title\n\nHello world. This is a test.";
         let batch = run_pipeline(input, &cfg).unwrap();
         assert!(batch.num_rows() > 0);
-        assert_eq!(batch.num_columns(), 9);
+        assert_eq!(batch.num_columns(), 11);
     }
 
     #[test]
@@ -180,8 +223,8 @@ mod tests {
         let cfg = PipelineConfig {
             format: DocumentFormat::Markdown,
             scrub: ScrubProfile {
-                patterns: vec![crate::schema::BuiltInPattern::Email],
-                custom: vec![],
+                patterns: vec![BuiltInPattern::Email],
+                ..ScrubProfile::default()
             },
             chunk: ChunkConfig::default(),
             source_label: None,
@@ -192,7 +235,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 1);
 
         let text_col = batch
-            .column(1)
+            .column(2)
             .as_any()
             .downcast_ref::<StringArray>()
             .unwrap();
@@ -204,6 +247,67 @@ mod tests {
             !text_col.value(0).contains("alice@example.com"),
             "raw email should not survive"
         );
+    }
+
+    #[test]
+    fn pipeline_emits_pii_metadata_for_scrubbed_email() {
+        use arrow::array::{Array, ListArray};
+
+        let cfg = PipelineConfig {
+            format: DocumentFormat::Markdown,
+            scrub: ScrubProfile {
+                patterns: vec![BuiltInPattern::Email],
+                ..ScrubProfile::default()
+            },
+            chunk: ChunkConfig::default(),
+            source_label: None,
+            embeddings: None,
+        };
+        let input = b"Contact alice@example.com for info.";
+        let batch = run_pipeline(input, &cfg).unwrap();
+
+        let pii_col = batch
+            .column(9)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .expect("pii_metadata should be List");
+        assert!(!pii_col.is_null(0), "row 0 should carry a finding");
+    }
+
+    #[test]
+    fn pipeline_chunk_id_is_deterministic() {
+        use arrow::array::{Array, StringArray};
+
+        let cfg = PipelineConfig {
+            format: DocumentFormat::Markdown,
+            scrub: ScrubProfile {
+                patterns: vec![BuiltInPattern::Email],
+                ..ScrubProfile::default()
+            },
+            chunk: ChunkConfig::default(),
+            source_label: None,
+            embeddings: None,
+        };
+        let input = b"Contact alice@example.com for info.";
+        let batch1 = run_pipeline(input, &cfg).unwrap();
+        let batch2 = run_pipeline(input, &cfg).unwrap();
+
+        let id_col1 = batch1
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let id_col2 = batch2
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(
+            id_col1.value(0),
+            id_col2.value(0),
+            "chunk_id must be stable"
+        );
+        assert_eq!(id_col1.value(0).len(), 64, "blake3 hex is 64 chars");
     }
 
     #[test]
@@ -226,12 +330,10 @@ mod tests {
         assert!(batch.num_rows() >= 1);
 
         let heading_col = batch
-            .column(4)
+            .column(5)
             .as_any()
             .downcast_ref::<ListArray>()
             .unwrap();
-        // The chunk should have a non-null heading_path (under "Architecture"
-        // or "Architecture > Storage").
         let has_heading = (0..heading_col.len()).any(|i| !heading_col.is_null(i));
         assert!(has_heading, "at least one chunk should have heading_path");
     }

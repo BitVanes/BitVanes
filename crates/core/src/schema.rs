@@ -87,16 +87,17 @@ pub struct EmbeddingConfig {
 
 /// Supported source document formats.
 ///
-/// # Note on PDF
+/// # Binary formats (DOCX, PPTX, XLSX, EPUB, RTF, PDF)
 ///
-/// `Pdf` is only resolvable on native targets with the `cli-pdf` feature
-/// enabled. The web PDF path runs through Mozilla PDF.js in a dedicated
-/// JavaScript worker *before* reaching this engine, so the wasm build
-/// receives the extracted text as [`Markdown`] or [`Text`].
+/// These are binary container formats (ZIP or proprietary) that require
+/// native feature-gated parsers. They are routed by [`parse_bytes`] before
+/// UTF-8 decoding. The wasm build cannot parse them — the browser must
+/// extract text via JS libraries (PDF.js, mammoth.js, etc.) and pass the
+/// resulting text/markdown to the engine.
 ///
-/// [`Markdown`]: DocumentFormat::Markdown
-/// [`Text`]: DocumentFormat::Text
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// [`parse_bytes`]: crate::parse::parse_bytes
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum DocumentFormat {
     /// GitHub-flavored Markdown via `pulldown-cmark`.
@@ -111,6 +112,16 @@ pub enum DocumentFormat {
     Html,
     /// PDF (native only; requires the `cli-pdf` feature).
     Pdf,
+    /// Microsoft Word `.docx` (native only; requires the `office` feature).
+    Docx,
+    /// Microsoft `PowerPoint` `.pptx` (native only; requires `office`).
+    Pptx,
+    /// Microsoft Excel `.xlsx` (native only; requires `office`).
+    Xlsx,
+    /// EPUB ebook (native only; requires `office`).
+    Epub,
+    /// Rich Text Format `.rtf` (native only; requires `office`).
+    Rtf,
 }
 
 /// Which BPE tokenizer to apply when computing chunk boundaries.
@@ -205,8 +216,12 @@ impl Default for ChunkConfig {
 /// Patterns always run BEFORE tokenization so that PII matches cannot be
 /// split across chunk boundaries. The scrubber emits an offset-delta map
 /// alongside the redacted text so chunk offsets can still be projected back
-/// onto the original document for UI highlighting.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// onto the original document for UI highlighting, plus a [`PiiFinding`]
+/// list recording every redaction with a confidence score and the contextual
+/// anchors that fired.
+///
+/// [`PiiFinding`]: crate::scrub::PiiFinding
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScrubProfile {
     /// Built-in pattern categories to enable.
     #[serde(default)]
@@ -216,10 +231,57 @@ pub struct ScrubProfile {
     /// `RegexSet` pass alongside the built-ins.
     #[serde(default)]
     pub custom: Vec<CustomPattern>,
+
+    /// Half-window size (in words) for the contextual anchor scan performed
+    /// around each candidate match. The scrubber looks `anchor_window` words
+    /// backward and forward for keyword anchors (e.g. `"ssn"`, `"credit card"`)
+    /// and boosts the confidence score accordingly. Default `7`. Set to `0`
+    /// to disable anchor boosting entirely.
+    #[serde(default = "default_anchor_window")]
+    pub anchor_window: u8,
+
+    /// Minimum confidence `\[0.0, 1.0\]` for a candidate to be scrubbed and
+    /// reported. Candidates below this threshold are silently dropped
+    /// (neither replaced nor emitted into `pii_metadata`). Default `0.0`
+    /// (keep every candidate that passes algorithmic verification).
+    #[serde(default)]
+    pub min_confidence: f32,
+
+    /// Entity slugs to **detect but not scrub** (report-only mode). The
+    /// finding is recorded in `pii_metadata` with its confidence and offsets,
+    /// but the original text passes through unchanged. Useful for audit-only
+    /// pipelines that need to know *where* PII is without redacting it.
+    ///
+    /// Example: `["email", "ssn"]` — emails and SSNs are detected and
+    /// reported, but the text is not masked.
+    #[serde(default)]
+    pub report_only: Vec<String>,
+}
+
+/// Default anchor half-window in words (the spec's recommended value).
+#[must_use]
+const fn default_anchor_window() -> u8 {
+    7
+}
+
+impl Default for ScrubProfile {
+    fn default() -> Self {
+        Self {
+            patterns: Vec::new(),
+            custom: Vec::new(),
+            anchor_window: default_anchor_window(),
+            min_confidence: 0.0,
+            report_only: Vec::new(),
+        }
+    }
 }
 
 /// Built-in PII pattern categories.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `#[non_exhaustive]` allows new patterns to be added in minor releases
+/// without breaking downstream exhaustive `match` arms.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BuiltInPattern {
     /// Email addresses (RFC-5322-ish).
@@ -230,6 +292,8 @@ pub enum BuiltInPattern {
     Phone,
     /// Credit-card numbers: regex candidate followed by Luhn validation.
     CreditCard,
+    /// US bank ABA routing numbers (9 digits with checksum verification).
+    RoutingNumber,
     /// AWS access-key IDs (`AKIA...`) and secret access keys.
     AwsKey,
     /// GitHub personal access tokens (`ghp_...`, `gho_...`, etc.).
@@ -301,10 +365,19 @@ impl SectionKind {
 /// `char_offset_start` / `char_offset_end` are offsets into the
 /// *post-scrubbed* document text. The scrubber's offset-delta map can
 /// project these back onto the original document for UI highlighting.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `pii` carries the [`PiiFinding`]s whose original-text ranges overlap this
+/// chunk, for audit/logging in the `pii_metadata` Arrow column.
+///
+/// [`PiiFinding`]: crate::scrub::PiiFinding
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChunkSpec {
     /// 0-based ordinal within the pipeline output.
     pub chunk_index: u32,
+    /// Deterministic content hash (`blake3` of text + source + offsets),
+    /// hex-encoded. Stable across identical pipeline runs for ID-based
+    /// dedup downstream.
+    pub chunk_id: String,
     /// The chunk text (post-scrubbing, post-tokenization slicing).
     pub text: String,
     /// BPE token count of `text`. Always `<= ChunkConfig::max_tokens`.
@@ -317,7 +390,10 @@ pub struct ChunkSpec {
     pub section_kind: SectionKind,
     /// Half-open `[start, end)` character range into the scrubbed document.
     pub char_offset_start: u32,
+    /// Half-open `[start, end)` character range end into the scrubbed doc.
     pub char_offset_end: u32,
+    /// PII findings overlapping this chunk (offsets into original text).
+    pub pii: Vec<crate::scrub::PiiFinding>,
 }
 
 #[cfg(test)]
@@ -353,6 +429,7 @@ mod tests {
                     regex: r"\bPROJECT-\d+\b".to_string(),
                     replacement: "[PROJECT-ID]".to_string(),
                 }],
+                ..ScrubProfile::default()
             },
             chunk: ChunkConfig {
                 max_tokens: 256,
