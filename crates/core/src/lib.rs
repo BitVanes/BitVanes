@@ -18,8 +18,8 @@
 //!    [`OffsetMap`][`scrub::OffsetMap`] for position projection.
 //! 3. **Chunk** ([`chunk`]): BPE-aware splitting at structural boundaries
 //!    using any of six `OpenAI` tokenizers.
-//! 4. **Assemble** ([`arrow_io`]): Arrow `RecordBatch` with 9 columns,
-//!    exported via zero-copy FFI pointers.
+//! 4. **Assemble** ([`arrow_io`]): Arrow `RecordBatch` with 11 columns
+//!    (including `chunk_id` and `pii_metadata`), exported via zero-copy FFI.
 //!
 //! ## Module layout
 //!
@@ -43,10 +43,14 @@ pub mod chunk;
 pub mod embed;
 pub mod error;
 pub mod parse;
+pub mod pii_detect;
 pub mod pipeline;
 pub mod schema;
 pub mod scrub;
 pub mod tokenize;
+
+#[cfg(feature = "mmap")]
+pub mod mmap;
 
 pub use arrow_io::{EMBEDDING_DIM, output_schema};
 pub use embed::Embedder;
@@ -55,11 +59,13 @@ pub use parse::{
     Document, HtmlParser, JsonParser, MarkdownParser, Parser, TextParser, TextSpan, parse_bytes,
     parse_str,
 };
-pub use pipeline::{run_pipeline, run_pipeline_with_embeddings};
+pub use pii_detect::{ModelDetector, PiiDetector};
+pub use pipeline::{run_pipeline, run_pipeline_with_embeddings, run_pipeline_with_strategy};
 pub use schema::{
-    BuiltInPattern, ChunkConfig, ChunkSpec, CustomPattern, DocumentFormat, EmbeddingConfig,
-    PipelineConfig, ScrubProfile, SectionKind, TokenizerKind,
+    BuiltInPattern, ChunkConfig, ChunkSpec, ChunkStrategy, CustomPattern, DocumentFormat,
+    EmbeddingConfig, PipelineConfig, ScrubProfile, SectionKind, TokenizerKind,
 };
+pub use scrub::{OffsetMap, PiiFinding, Scrubber};
 
 #[cfg(feature = "embeddings")]
 pub use embed::OrtEmbedder;

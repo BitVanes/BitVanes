@@ -41,6 +41,19 @@ pub mod text;
 #[cfg(feature = "cli-pdf")]
 pub mod pdf;
 
+#[cfg(feature = "office")]
+pub mod docx;
+#[cfg(feature = "office")]
+pub mod epub;
+#[cfg(feature = "office")]
+pub mod pptx;
+#[cfg(feature = "office")]
+pub mod rtf;
+#[cfg(feature = "office")]
+pub mod xlsx;
+#[cfg(feature = "office")]
+pub mod zip_util;
+
 pub use html::HtmlParser;
 pub use json::JsonParser;
 pub use markdown::MarkdownParser;
@@ -157,7 +170,7 @@ pub trait Parser {
 /// or [`BitVanesError::ParserUnavailable`] if the requested format is not
 /// compiled into this build (e.g. PDF without the `cli-pdf` feature).
 pub fn parse_bytes(bytes: &[u8], cfg: &PipelineConfig) -> Result<Document> {
-    // PDF is binary; route it to the native extractor before UTF-8 decoding.
+    // Binary container formats are routed before UTF-8 decoding.
     #[cfg(feature = "cli-pdf")]
     if cfg.format == DocumentFormat::Pdf {
         return pdf::parse_pdf_bytes(bytes, cfg);
@@ -166,6 +179,32 @@ pub fn parse_bytes(bytes: &[u8], cfg: &PipelineConfig) -> Result<Document> {
     if cfg.format == DocumentFormat::Pdf {
         return Err(BitVanesError::ParserUnavailable(
             "pdf parsing requires the `cli-pdf` feature (native only)",
+        ));
+    }
+
+    #[cfg(feature = "office")]
+    {
+        match cfg.format {
+            DocumentFormat::Docx => return docx::parse_docx_bytes(bytes, cfg),
+            DocumentFormat::Pptx => return pptx::parse_pptx_bytes(bytes, cfg),
+            DocumentFormat::Xlsx => return xlsx::parse_xlsx_bytes(bytes, cfg),
+            DocumentFormat::Epub => return epub::parse_epub_bytes(bytes, cfg),
+            DocumentFormat::Rtf => return rtf::parse_rtf_bytes(bytes, cfg),
+            _ => {}
+        }
+    }
+    #[cfg(not(feature = "office"))]
+    if matches!(
+        cfg.format,
+        DocumentFormat::Docx
+            | DocumentFormat::Pptx
+            | DocumentFormat::Xlsx
+            | DocumentFormat::Epub
+            | DocumentFormat::Rtf
+    ) {
+        return Err(BitVanesError::ParserUnavailable(
+            "office-format parsing requires the `office` feature (native only). \
+             The browser must extract text via JS and pass it as markdown/text.",
         ));
     }
 
@@ -185,8 +224,13 @@ pub fn parse_str(input: &str, cfg: &PipelineConfig) -> Result<Document> {
         DocumentFormat::Text => TextParser.parse(input, cfg),
         DocumentFormat::Html => HtmlParser.parse(input, cfg),
         DocumentFormat::Json => JsonParser.parse(input, cfg),
-        DocumentFormat::Pdf => Err(BitVanesError::ParserUnavailable(
-            "pdf must be parsed from bytes via parse_bytes (binary format)",
+        DocumentFormat::Pdf
+        | DocumentFormat::Docx
+        | DocumentFormat::Pptx
+        | DocumentFormat::Xlsx
+        | DocumentFormat::Epub
+        | DocumentFormat::Rtf => Err(BitVanesError::ParserUnavailable(
+            "binary formats (pdf/docx/pptx/xlsx/epub/rtf) must be parsed from bytes via parse_bytes",
         )),
     }
 }

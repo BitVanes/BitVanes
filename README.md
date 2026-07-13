@@ -95,19 +95,91 @@ release_batch(slotId);
 > it), so every build is fully offline. There is intentionally no
 > `embed-vocab` feature.
 
+## Supported formats
+
+| Format | Feature | Native only? | Notes |
+|--------|---------|:------------:|-------|
+| Markdown | — | no | pulldown-cmark, GFM |
+| HTML | — | no | scraper / html5ever |
+| Plain text | — | no | Paragraph-based splitting |
+| JSON | — | no | Structural (object → heading_path) |
+| PDF | `cli-pdf` | yes | pdf-extract (browser uses PDF.js) |
+| **DOCX** | `office` | yes | ZIP + quick-xml, headings/tables/lists |
+| **PPTX** | `office` | yes | Slide-by-slide text extraction |
+| **XLSX** | `office` | yes | calamine, memory-guarded for large sheets |
+| **EPUB** | `office` | yes | OPF spine + HtmlParser per chapter |
+| **RTF** | `office` | yes | rtf-parser, heading heuristics |
+
+## Performance
+
+| Lever | Feature | Effect |
+|-------|---------|--------|
+| **Parallel regex sweep** | `parallel` | Rayon across PII patterns (~4–8× on 8 patterns) |
+| **Parallel embedding** | `embeddings` | Batch ONNX inference across chunks |
+| **Memory-mapped I/O** | `mmap` | Zero-copy file reads for >1 MB files |
+| **Streaming IPC output** | `ipc` | `IpcStream<W>` writes batches directly to disk/stdout |
+| **Wasm SIMD** | (always on wasm) | `target-feature=+simd128` via `.cargo/config.toml` |
+
+```bash
+# Build the CLI with all performance features:
+cargo build --release --features "office,mmap,parallel,ipc,csv,cli-pdf"
+```
+
 ## Output schema
 
-| Column | Type | Nullable |
-|--------|------|----------|
-| `chunk_index` | `UInt32` | no |
-| `text` | `Utf8` | no |
-| `token_count` | `UInt16` | no |
-| `source_path` | `Utf8` | no |
-| `heading_path` | `List<Utf8>` | yes |
-| `section_kind` | `Dictionary<Int8, Utf8>` | no |
-| `char_offset_start` | `UInt32` | no |
-| `char_offset_end` | `UInt32` | no |
-| `embedding` | `FixedSizeList<Float32, 1536>` | yes |
+The Arrow `RecordBatch` emitted by `run_pipeline` has 11 columns:
+
+| # | Column | Type | Nullable | Description |
+|---|--------|------|----------|-------------|
+| 0 | `chunk_index` | `UInt32` | no | 0-based ordinal |
+| 1 | `chunk_id` | `Utf8` | no | Deterministic blake3 hash of chunk content |
+| 2 | `text` | `Utf8` | no | Scrubbed chunk text (ready for vector embedding) |
+| 3 | `token_count` | `UInt16` | no | BPE token count of `text` |
+| 4 | `source_path` | `Utf8` | no | Source filename/label for lineage |
+| 5 | `heading_path` | `List<Utf8>` | yes | Heading ancestry (H1→H6) |
+| 6 | `section_kind` | `Dictionary<Int8, Utf8>` | no | paragraph, code, heading, table_cell, etc. |
+| 7 | `char_offset_start` | `UInt32` | no | Start offset into scrubbed text |
+| 8 | `char_offset_end` | `UInt32` | no | End offset into scrubbed text |
+| 9 | `pii_metadata` | `List<Struct>` | yes | PII findings overlapping this chunk |
+| 10 | `embedding` | `FixedSizeList<Float32, 1536>` | yes | Dense vector (populated downstream) |
+
+### `pii_metadata` struct fields
+
+Each finding in the `pii_metadata` list is a struct with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entity` | `Utf8` | Entity slug: `email`, `ssn`, `credit_card`, `routing_number`, ... |
+| `confidence` | `Float32` | Weighted-additive score in `[0, 1]` |
+| `offset_start` | `Int32` | Byte offset into the **original** (pre-scrub) text |
+| `offset_end` | `Int32` | End byte offset (exclusive) |
+| `anchors` | `List<Utf8>` | Contextual keywords that fired in the ±N-word window |
+
+## PII scrubbing engine
+
+Two-tier architecture with weighted-additive confidence scoring:
+
+**Tier 1** (always available, no model download):
+
+| Pattern | Base | Validator | Notes |
+|---------|------|-----------|-------|
+| `email` | 0.85 | — | RFC-5322-ish regex |
+| `ssn` | 0.60 | — | US Social Security `XXX-XX-XXXX` |
+| `phone` | 0.65 | — | E.164 (`+1…`) |
+| `credit_card` | 0.70 | **Luhn mod-10 gate** | Floors at 0.90 on pass; drops on fail |
+| `routing_number` | 0.55 | **ABA checksum gate** | 9-digit US bank routing |
+| `aws_key` | 0.95 | — | `AKIA…` prefix |
+| `github_pat` | 0.95 | — | `ghp_…` / `gho_…` prefix |
+| `jwt` | 0.90 | — | Three base64url segments |
+
+Each candidate's confidence is boosted by contextual anchor keywords
+(e.g. `"social security"`, `"credit card"`) found in a configurable
+±N-word sliding window (default: 7 words, `+0.10` per hit, capped at `0.99`).
+
+**Tier 2** (stub): the `PiiDetector` trait + `ModelDetector` placeholder
+(gated behind the `pii-model` feature) provides the plug-in point for a
+future ONNX NER model. The pipeline contract is unchanged: one finding list,
+one offset map, one `pii_metadata` column.
 
 ## Embeddings (native, `embeddings` feature)
 

@@ -107,7 +107,9 @@ pub fn active_export_count() -> u32 {
 /// Processes a document and returns chunk data as a JS array (via serde,
 /// NOT zero-copy Arrow FFI). Fallback for when `parseRecordBatch` fails.
 ///
-/// Each element is `{ chunk_index, text, token_count, heading_path, section_kind }`.
+/// Each element carries the chunk text, token count, heading ancestry,
+/// section kind, deterministic `chunk_id`, and the PII findings whose
+/// original-text ranges overlap the chunk.
 #[wasm_bindgen]
 pub fn process_chunks(config_js: JsValue, bytes: &[u8]) -> Result<JsValue, JsValue> {
     let cfg: bitvanes_core::PipelineConfig = serde_wasm_bindgen::from_value(config_js)
@@ -115,20 +117,33 @@ pub fn process_chunks(config_js: JsValue, bytes: &[u8]) -> Result<JsValue, JsVal
 
     let doc = bitvanes_core::parse::parse_bytes(bytes, &cfg)
         .map_err(|e| JsValue::from_str(&format!("parse: {e}")))?;
-    let (scrubbed, _) = bitvanes_core::scrub::scrub_document(doc, &cfg.scrub)
+    let (scrubbed, offset_map, findings) = bitvanes_core::scrub::scrub_document(doc, &cfg.scrub)
         .map_err(|e| JsValue::from_str(&format!("scrub: {e}")))?;
-    let chunks =
+    let mut chunks =
         bitvanes_core::chunk::chunk_document(&scrubbed, &cfg.chunk, cfg.source_label.as_deref())
             .map_err(|e| JsValue::from_str(&format!("chunk: {e}")))?;
+    bitvanes_core::pipeline::attach_metadata(&mut chunks, &findings, &offset_map);
 
     let result: Vec<_> = chunks
         .iter()
         .map(|c| SimpleChunk {
             chunk_index: c.chunk_index,
+            chunk_id: c.chunk_id.clone(),
             text: c.text.clone(),
             token_count: c.token_count,
             heading_path: c.heading_path.clone(),
             section_kind: format!("{:?}", c.section_kind).to_lowercase(),
+            pii: c
+                .pii
+                .iter()
+                .map(|f| SimpleFinding {
+                    entity: f.entity.clone(),
+                    offset_start: f.offset_start,
+                    offset_end: f.offset_end,
+                    confidence: f.confidence,
+                    anchors_hit: f.anchors_hit.clone(),
+                })
+                .collect(),
         })
         .collect();
 
@@ -138,8 +153,19 @@ pub fn process_chunks(config_js: JsValue, bytes: &[u8]) -> Result<JsValue, JsVal
 #[derive(serde::Serialize)]
 struct SimpleChunk {
     chunk_index: u32,
+    chunk_id: String,
     text: String,
     token_count: u16,
     heading_path: Vec<String>,
     section_kind: String,
+    pii: Vec<SimpleFinding>,
+}
+
+#[derive(serde::Serialize)]
+struct SimpleFinding {
+    entity: String,
+    offset_start: u32,
+    offset_end: u32,
+    confidence: f32,
+    anchors_hit: Vec<String>,
 }
