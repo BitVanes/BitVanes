@@ -91,6 +91,7 @@ mod tests {
         let chunks = vec![
             ChunkSpec {
                 chunk_index: 0,
+                chunk_id: "a".to_string(),
                 text: "Hello world.".to_string(),
                 token_count: 3,
                 source_path: "test.md".to_string(),
@@ -98,9 +99,11 @@ mod tests {
                 section_kind: SectionKind::Paragraph,
                 char_offset_start: 0,
                 char_offset_end: 12,
+                pii: vec![],
             },
             ChunkSpec {
                 chunk_index: 1,
+                chunk_id: "b".to_string(),
                 text: "Second chunk.".to_string(),
                 token_count: 2,
                 source_path: "test.md".to_string(),
@@ -108,6 +111,7 @@ mod tests {
                 section_kind: SectionKind::Code,
                 char_offset_start: 12,
                 char_offset_end: 25,
+                pii: vec![],
             },
         ];
         chunks_to_batch(&chunks).expect("batch should build")

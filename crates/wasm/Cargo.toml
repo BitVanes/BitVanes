@@ -15,7 +15,7 @@ description = "Thin wasm-bindgen wrapper exposing bitvanes-core to JavaScript vi
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-bitvanes-core = { path = "../core", version = "0.1.1" }
+bitvanes-core = { path = "../core", version = "0.4.0" }
 console_error_panic_hook = "0.1.7"
 serde = { version = "1.0.228", features = ["derive"] }
 serde-wasm-bindgen = "0.6.5"

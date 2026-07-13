@@ -27,9 +27,10 @@
 //! sub-chunk overlaps the next. `overlap_tokens` must be strictly less
 //! than `max_tokens`.
 
+use crate::embed::Embedder;
 use crate::error::{BitVanesError, Result};
 use crate::parse::{Document, offset_to_u32};
-use crate::schema::{ChunkConfig, ChunkSpec, SectionKind};
+use crate::schema::{ChunkConfig, ChunkSpec, ChunkStrategy, SectionKind};
 use crate::tokenize::Tokenizer;
 
 /// Chunks a scrubbed [`Document`] into [`ChunkSpec`]s according to the
@@ -75,7 +76,7 @@ pub fn chunk_document(
                 OverlapPrefix::default()
             };
             if accum.is_nonempty() {
-                chunks.push(accum.finish(doc, &source));
+                chunks.push(accum.finish(doc, &source, &tokenizer));
             }
             accum = ChunkAccum::default();
             let ctx = SplitCtx {
@@ -89,11 +90,11 @@ pub fn chunk_document(
         } else if accum.try_add(span, span_tokens, max_tokens) {
         } else {
             let overlap_spans = accum.take_overlap(overlap);
-            chunks.push(accum.finish(doc, &source));
+            chunks.push(accum.finish(doc, &source, &tokenizer));
             accum = ChunkAccum::from_overlap(&overlap_spans);
             if !accum.try_add(span, span_tokens, max_tokens) {
                 if accum.is_nonempty() {
-                    chunks.push(accum.finish(doc, &source));
+                    chunks.push(accum.finish(doc, &source, &tokenizer));
                 }
                 accum = ChunkAccum::default();
                 accum.try_add(span, span_tokens, max_tokens);
@@ -102,7 +103,7 @@ pub fn chunk_document(
     }
 
     if accum.is_nonempty() {
-        chunks.push(accum.finish(doc, &source));
+        chunks.push(accum.finish(doc, &source, &tokenizer));
     }
 
     // Assign sequential chunk_index values.
@@ -111,6 +112,150 @@ pub fn chunk_document(
     }
 
     Ok(chunks)
+}
+
+/// Embedding-guided chunking.
+///
+/// Behaves like [`chunk_document`] but, under [`ChunkStrategy::Semantic`],
+/// only merges an adjacent span into the current chunk when its embedding is
+/// within `similarity_threshold` (cosine) of the chunk's running centroid
+/// *and* `max_tokens` is respected. A topic drift therefore opens a new
+/// chunk even when there is token budget left — producing topically
+/// coherent chunks.
+///
+/// Overlap is not supported under the semantic strategy (`overlap_tokens`
+/// must be 0). If `cfg.strategy` is [`ChunkStrategy::Structural`], this
+/// delegates to [`chunk_document`].
+///
+/// # Errors
+///
+/// Returns [`BitVanesError::InvalidConfig`] for the usual config violations,
+/// or if `overlap_tokens > 0` under the semantic strategy. Returns
+/// [`BitVanesError::InvalidInput`] if the embedder returns the wrong number
+/// of vectors.
+pub fn chunk_document_semantic(
+    doc: &Document,
+    cfg: &ChunkConfig,
+    embedder: &dyn Embedder,
+    source_label: Option<&str>,
+) -> Result<Vec<ChunkSpec>> {
+    validate_config(cfg)?;
+    if !matches!(cfg.strategy, ChunkStrategy::Semantic { .. }) {
+        return chunk_document(doc, cfg, source_label);
+    }
+    if cfg.overlap_tokens != 0 {
+        return Err(BitVanesError::InvalidConfig(
+            "semantic chunking does not support overlap_tokens > 0 (use Structural)".to_string(),
+        ));
+    }
+    if doc.spans.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let similarity_threshold = match cfg.strategy {
+        ChunkStrategy::Semantic {
+            similarity_threshold,
+        } => similarity_threshold,
+        ChunkStrategy::Structural => unreachable!("guarded above"),
+    };
+    let tokenizer = Tokenizer::new(cfg.tokenizer)?;
+    let max_tokens = cfg.max_tokens as usize;
+    let source = source_label.unwrap_or("").to_string();
+
+    // Embed every span once; similarity is span-vs-running-chunk-centroid.
+    let span_texts: Vec<&str> = doc.spans.iter().map(|s| s.text(doc)).collect();
+    let embeddings = embedder.embed(&span_texts)?;
+    if embeddings.len() != doc.spans.len() {
+        return Err(BitVanesError::InvalidInput(format!(
+            "embedder returned {} vectors for {} spans",
+            embeddings.len(),
+            doc.spans.len()
+        )));
+    }
+    let dim = embedder.dim();
+
+    let mut chunks: Vec<ChunkSpec> = Vec::new();
+    let mut accum = ChunkAccum::default();
+    let mut centroid_sum = vec![0.0f32; dim];
+    let mut centroid_n: u32 = 0;
+
+    for (i, span) in doc.spans.iter().enumerate() {
+        let span_tokens = tokenizer.count(span_texts[i]);
+
+        if span_tokens > max_tokens {
+            // Oversized span: flush, then fall back to token-boundary split.
+            if accum.is_nonempty() {
+                chunks.push(accum.finish(doc, &source, &tokenizer));
+            }
+            accum = ChunkAccum::default();
+            centroid_sum = vec![0.0; dim];
+            centroid_n = 0;
+            let ctx = SplitCtx {
+                doc,
+                tokenizer: &tokenizer,
+                max_tokens,
+                overlap: 0,
+                source: &source,
+            };
+            split_oversized_span(&ctx, span, &OverlapPrefix::default(), &mut chunks)?;
+            continue;
+        }
+
+        let similar = !accum.is_nonempty()
+            || cosine(&embeddings[i], &centroid_avg(&centroid_sum, centroid_n))
+                >= similarity_threshold;
+
+        if similar && accum.try_add(span, span_tokens, max_tokens) {
+            for (c, v) in centroid_sum.iter_mut().zip(&embeddings[i]) {
+                *c += *v;
+            }
+            centroid_n += 1;
+        } else {
+            // Flush and start a fresh chunk with this span.
+            if accum.is_nonempty() {
+                chunks.push(accum.finish(doc, &source, &tokenizer));
+            }
+            accum = ChunkAccum::default();
+            centroid_sum = vec![0.0; dim];
+            accum.try_add(span, span_tokens, max_tokens);
+            for (c, v) in centroid_sum.iter_mut().zip(&embeddings[i]) {
+                *c += *v;
+            }
+            centroid_n = 1;
+        }
+    }
+
+    if accum.is_nonempty() {
+        chunks.push(accum.finish(doc, &source, &tokenizer));
+    }
+
+    for (i, chunk) in chunks.iter_mut().enumerate() {
+        chunk.chunk_index = offset_to_u32(i);
+    }
+    Ok(chunks)
+}
+
+/// Cosine similarity, or `0.0` if either vector is zero-norm.
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len().min(b.len());
+    let (mut dot, mut na, mut nb) = (0.0f32, 0.0f32, 0.0f32);
+    for i in 0..n {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    let denom = na.sqrt() * nb.sqrt();
+    if denom > 0.0 { dot / denom } else { 0.0 }
+}
+
+/// Elementwise mean of an embedding sum, or all-zeros when `n == 0`.
+#[allow(clippy::cast_precision_loss)]
+fn centroid_avg(sum: &[f32], n: u32) -> Vec<f32> {
+    if n == 0 {
+        return vec![0.0; sum.len()];
+    }
+    let n = n as f32;
+    sum.iter().map(|v| v / n).collect()
 }
 
 /// Validates that the chunk config is self-consistent.
@@ -201,7 +346,7 @@ fn split_oversized_span(
     while cursor < full_text.len() {
         let remaining = &full_text[cursor..];
         let budget = max_tokens.saturating_sub(prefix.tokens).max(1);
-        let (split_at, piece_tokens) = tokenizer.split_at_token_boundary(remaining, budget)?;
+        let (split_at, _piece_tokens) = tokenizer.split_at_token_boundary(remaining, budget)?;
 
         if split_at == 0 {
             return Err(BitVanesError::InvalidInput(format!(
@@ -212,7 +357,6 @@ fn split_oversized_span(
 
         let piece = &remaining[..split_at];
         let piece_start = abs_base + cursor;
-        let total_tokens = prefix.tokens + piece_tokens;
 
         let mut text = String::with_capacity(prefix.text.len() + piece.len());
         let start_off = if prefix.tokens > 0 {
@@ -223,9 +367,12 @@ fn split_oversized_span(
         };
         text.push_str(piece);
         let end_off = piece_start + split_at;
+        // Re-count the actual (prefix + piece) text for an accurate count.
+        let total_tokens = tokenizer.count(&text);
 
         out.push(ChunkSpec {
-            chunk_index: 0, // re-indexed by caller
+            chunk_index: 0,          // re-indexed by caller
+            chunk_id: String::new(), // filled by pipeline's attach_metadata
             text,
             token_count: u16::try_from(total_tokens).map_err(|_| {
                 BitVanesError::InvalidInput("token count overflowed u16".to_string())
@@ -235,6 +382,7 @@ fn split_oversized_span(
             section_kind: span.section_kind,
             char_offset_start: offset_to_u32(start_off),
             char_offset_end: offset_to_u32(end_off),
+            pii: Vec::new(), // filled by pipeline's attach_metadata
         });
 
         cursor += split_at;
@@ -341,17 +489,23 @@ impl ChunkAccum {
         }
     }
 
-    fn finish(self, doc: &Document, source: &str) -> ChunkSpec {
+    fn finish(self, doc: &Document, source: &str, tokenizer: &Tokenizer) -> ChunkSpec {
         let text = doc.full_text[self.start_offset..self.end_offset].to_string();
+        // Re-count the actual concatenated chunk text rather than trusting
+        // the sum of per-span counts: BPE junction effects at span boundaries
+        // can make the true count differ by ±1 from the sum.
+        let actual_tokens = tokenizer.count(&text);
         ChunkSpec {
             chunk_index: 0,
+            chunk_id: String::new(), // filled by pipeline's attach_metadata
             text,
-            token_count: u16::try_from(self.token_count).unwrap_or(u16::MAX),
+            token_count: u16::try_from(actual_tokens).unwrap_or(u16::MAX),
             source_path: source.to_string(),
             heading_path: self.heading_path,
             section_kind: self.section_kind.unwrap_or(SectionKind::Paragraph),
             char_offset_start: offset_to_u32(self.start_offset),
             char_offset_end: offset_to_u32(self.end_offset),
+            pii: Vec::new(), // filled by pipeline's attach_metadata
         }
     }
 }
@@ -388,6 +542,31 @@ mod tests {
             max_tokens,
             overlap_tokens: 0,
             tokenizer: TokenizerKind::Cl100kBase,
+            strategy: ChunkStrategy::default(),
+        }
+    }
+
+    #[test]
+    fn token_count_is_exact_for_packed_chunks() {
+        // The reported token_count must equal the BPE count of the actual
+        // chunk text, not a sum of per-span counts (which can drift at span
+        // junctions). Pack several spans into one chunk to exercise this.
+        let doc = make_doc(&[
+            ("The quick brown fox ", SectionKind::Paragraph),
+            ("jumps over the lazy dog ", SectionKind::Paragraph),
+            ("while a cat watches quietly ", SectionKind::Paragraph),
+            ("from the wooden windowsill.", SectionKind::Paragraph),
+        ]);
+        let chunks = chunk_document(&doc, &cfg(512), None).unwrap();
+        let tokenizer = crate::tokenize::Tokenizer::new(TokenizerKind::Cl100kBase).unwrap();
+        assert!(!chunks.is_empty());
+        for c in &chunks {
+            assert_eq!(
+                c.token_count as usize,
+                tokenizer.count(&c.text),
+                "reported token_count must match actual count of chunk text {:?}",
+                c.text
+            );
         }
     }
 
@@ -552,6 +731,7 @@ mod tests {
             max_tokens: 8,
             overlap_tokens: 3,
             tokenizer: TokenizerKind::Cl100kBase,
+            strategy: ChunkStrategy::default(),
         };
         let chunks = chunk_document(&doc, &cfg_overlap, None).unwrap();
         assert!(
@@ -602,6 +782,7 @@ mod tests {
             max_tokens: 12,
             overlap_tokens: 3,
             tokenizer: TokenizerKind::Cl100kBase,
+            strategy: ChunkStrategy::default(),
         };
         let chunks = chunk_document(&doc, &cfg_overlap, None).unwrap();
         assert!(chunks.len() >= 3, "expected multiple chunks");
@@ -636,8 +817,129 @@ mod tests {
             max_tokens: u32::from(u16::MAX) + 1,
             overlap_tokens: 0,
             tokenizer: TokenizerKind::Cl100kBase,
+            strategy: ChunkStrategy::default(),
         };
         let err = chunk_document(&doc, &big, None).unwrap_err();
         assert!(matches!(err, BitVanesError::InvalidConfig(_)));
+    }
+
+    // --- Semantic (embedding-guided) chunking ---
+
+    /// Maps text to one of two orthogonal topic vectors so similarity is
+    /// deterministic: "cat" → [1,0], "dog" → [0,1], else the diagonal.
+    struct TopicEmbedder;
+    impl Embedder for TopicEmbedder {
+        fn dim(&self) -> usize {
+            2
+        }
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    if t.contains("cat") {
+                        vec![1.0, 0.0]
+                    } else if t.contains("dog") {
+                        vec![0.0, 1.0]
+                    } else {
+                        vec![0.707_106_77, 0.707_106_77]
+                    }
+                })
+                .collect())
+        }
+    }
+
+    fn semantic_cfg(threshold: f32) -> ChunkConfig {
+        ChunkConfig {
+            max_tokens: 512,
+            overlap_tokens: 0,
+            tokenizer: TokenizerKind::Cl100kBase,
+            strategy: ChunkStrategy::Semantic {
+                similarity_threshold: threshold,
+            },
+        }
+    }
+
+    fn topic_doc() -> Document {
+        make_doc(&[
+            ("cat one ", SectionKind::Paragraph),
+            ("cat two ", SectionKind::Paragraph),
+            ("dog three ", SectionKind::Paragraph),
+            ("dog four ", SectionKind::Paragraph),
+        ])
+    }
+
+    #[test]
+    fn semantic_splits_on_topic_drift() {
+        // cosine(cat, dog) = 0 < 0.5, so the cat-run and dog-run separate.
+        let doc = topic_doc();
+        let chunks =
+            chunk_document_semantic(&doc, &semantic_cfg(0.5), &TopicEmbedder, None).unwrap();
+        assert_eq!(
+            chunks.len(),
+            2,
+            "cats and dogs should form separate chunks: {:?}",
+            chunks.iter().map(|c| c.text.as_str()).collect::<Vec<_>>()
+        );
+        assert!(chunks[0].text.contains("cat") && !chunks[0].text.contains("dog"));
+        assert!(chunks[1].text.contains("dog"));
+    }
+
+    #[test]
+    fn semantic_merges_when_threshold_is_zero() {
+        // cosine 0 >= 0 threshold → everything merges (token budget allows it).
+        let doc = topic_doc();
+        let chunks =
+            chunk_document_semantic(&doc, &semantic_cfg(0.0), &TopicEmbedder, None).unwrap();
+        assert_eq!(chunks.len(), 1, "threshold 0 should merge all spans");
+    }
+
+    #[test]
+    fn semantic_still_respects_max_tokens() {
+        // Tight token budget forces a split even within the same topic.
+        let doc = make_doc(&[
+            ("cat one two three four ", SectionKind::Paragraph),
+            ("cat five six seven eight ", SectionKind::Paragraph),
+        ]);
+        let mut c = semantic_cfg(0.0);
+        c.max_tokens = 5;
+        let chunks = chunk_document_semantic(&doc, &c, &TopicEmbedder, None).unwrap();
+        assert!(chunks.len() > 1, "max_tokens must still cap chunk size");
+        for ch in &chunks {
+            assert!(ch.token_count <= 5);
+        }
+    }
+
+    #[test]
+    fn semantic_rejects_overlap() {
+        let doc = topic_doc();
+        let mut c = semantic_cfg(0.5);
+        c.overlap_tokens = 4;
+        let err = chunk_document_semantic(&doc, &c, &TopicEmbedder, None).unwrap_err();
+        assert!(matches!(err, BitVanesError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn semantic_delegates_to_structural_for_structural_strategy() {
+        // A Structural strategy must ignore the embedder entirely and match
+        // the plain structural chunker exactly.
+        struct PanicEmbedder;
+        impl Embedder for PanicEmbedder {
+            fn dim(&self) -> usize {
+                2
+            }
+            fn embed(&self, _texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+                unreachable!("structural strategy must not call the embedder")
+            }
+        }
+        let doc = topic_doc();
+        let cfg = ChunkConfig {
+            max_tokens: 5,
+            overlap_tokens: 0,
+            tokenizer: TokenizerKind::Cl100kBase,
+            strategy: ChunkStrategy::Structural,
+        };
+        let via_strategy = chunk_document_semantic(&doc, &cfg, &PanicEmbedder, None).unwrap();
+        let structural = chunk_document(&doc, &cfg, None).unwrap();
+        assert_eq!(via_strategy, structural);
     }
 }

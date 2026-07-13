@@ -8,10 +8,12 @@
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, FixedSizeListBuilder, Float32Builder, ListArray, ListBuilder, RecordBatch,
-    StringArray, StringDictionaryBuilder, UInt16Array, UInt32Array,
+    ArrayRef, FixedSizeListBuilder, Float32Builder, Int32Builder, ListArray, ListBuilder,
+    NullBufferBuilder, RecordBatch, StringArray, StringBuilder, StringDictionaryBuilder,
+    StructArray, UInt16Array, UInt32Array,
 };
-use arrow::datatypes::Int8Type;
+use arrow::buffer::OffsetBuffer;
+use arrow::datatypes::{DataType, Field, Int8Type};
 
 use crate::arrow_io::{EMBEDDING_DIM, output_schema};
 use crate::error::Result;
@@ -20,9 +22,9 @@ use crate::schema::{ChunkSpec, SectionKind};
 /// Converts a slice of [`ChunkSpec`]s into an Arrow [`RecordBatch`] whose
 /// schema matches [`output_schema`].
 ///
-/// Column layout (positional):
-/// `chunk_index`, `text`, `token_count`, `source_path`, `heading_path`,
-/// `section_kind`, `char_offset_start`, `char_offset_end`, `embedding`.
+/// Column layout (positional): `chunk_index`, `chunk_id`, `text`,
+/// `token_count`, `source_path`, `heading_path`, `section_kind`,
+/// `char_offset_start`, `char_offset_end`, `pii_metadata`, `embedding`.
 ///
 /// The `embedding` column is all-null in v1 (populated downstream by the
 /// user's model, not by this engine).
@@ -34,40 +36,7 @@ use crate::schema::{ChunkSpec, SectionKind};
 /// unchanged, but handled for safety).
 pub fn chunks_to_batch(chunks: &[ChunkSpec]) -> Result<RecordBatch> {
     let schema = output_schema();
-
-    let chunk_index = UInt32Array::from_iter_values(chunks.iter().map(|c| c.chunk_index));
-    let text: StringArray = chunks.iter().map(|c| Some(c.text.as_str())).collect();
-    let token_count = UInt16Array::from_iter_values(chunks.iter().map(|c| c.token_count));
-    let source_path: StringArray = chunks
-        .iter()
-        .map(|c| Some(c.source_path.as_str()))
-        .collect();
-
-    // heading_path: List<Utf8>, nullable.
-    let heading_path = build_heading_path(chunks);
-
-    // section_kind: Dictionary<Int8, Utf8>.
-    let section_kind = build_section_kind(chunks);
-
-    let char_offset_start =
-        UInt32Array::from_iter_values(chunks.iter().map(|c| c.char_offset_start));
-    let char_offset_end = UInt32Array::from_iter_values(chunks.iter().map(|c| c.char_offset_end));
-
-    // embedding: all-null placeholder (FixedSizeList<Float32, 1536>).
-    let embedding = build_null_embedding(chunks.len());
-
-    let columns: Vec<ArrayRef> = vec![
-        Arc::new(chunk_index),
-        Arc::new(text),
-        Arc::new(token_count),
-        Arc::new(source_path),
-        Arc::new(heading_path),
-        Arc::new(section_kind),
-        Arc::new(char_offset_start),
-        Arc::new(char_offset_end),
-        Arc::new(embedding),
-    ];
-
+    let columns = build_columns(chunks, build_null_embedding(chunks.len()));
     Ok(RecordBatch::try_new(schema, columns)?)
 }
 
@@ -93,9 +62,21 @@ pub fn chunks_to_batch_with_embeddings(
             chunks.len()
         )));
     }
-
     let schema = crate::arrow_io::output_schema_with_dim(dim);
+    let embedding = build_real_embedding(embeddings, dim);
+    let columns = build_columns(chunks, embedding);
+    Ok(RecordBatch::try_new(schema, columns)?)
+}
+
+/// Builds the 11 columns shared by both the null-embedding and
+/// real-embedding paths. `embedding` is supplied by the caller.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+fn build_columns(
+    chunks: &[ChunkSpec],
+    embedding: arrow::array::FixedSizeListArray,
+) -> Vec<ArrayRef> {
     let chunk_index = UInt32Array::from_iter_values(chunks.iter().map(|c| c.chunk_index));
+    let chunk_id: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
     let text: StringArray = chunks.iter().map(|c| Some(c.text.as_str())).collect();
     let token_count = UInt16Array::from_iter_values(chunks.iter().map(|c| c.token_count));
     let source_path: StringArray = chunks
@@ -107,12 +88,11 @@ pub fn chunks_to_batch_with_embeddings(
     let char_offset_start =
         UInt32Array::from_iter_values(chunks.iter().map(|c| c.char_offset_start));
     let char_offset_end = UInt32Array::from_iter_values(chunks.iter().map(|c| c.char_offset_end));
+    let pii_metadata = build_pii_metadata(chunks);
 
-    // embedding: real Float32 vectors (non-null).
-    let embedding = build_real_embedding(embeddings, dim);
-
-    let columns: Vec<ArrayRef> = vec![
+    vec![
         Arc::new(chunk_index),
+        Arc::new(chunk_id),
         Arc::new(text),
         Arc::new(token_count),
         Arc::new(source_path),
@@ -120,15 +100,14 @@ pub fn chunks_to_batch_with_embeddings(
         Arc::new(section_kind),
         Arc::new(char_offset_start),
         Arc::new(char_offset_end),
+        Arc::new(pii_metadata),
         Arc::new(embedding),
-    ];
-
-    Ok(RecordBatch::try_new(schema, columns)?)
+    ]
 }
 
 /// Builds the `heading_path` column: `List<Utf8>`, nullable.
 fn build_heading_path(chunks: &[ChunkSpec]) -> ListArray {
-    let mut builder = ListBuilder::new(arrow::array::StringBuilder::new());
+    let mut builder = ListBuilder::new(StringBuilder::new());
     for chunk in chunks {
         for heading in &chunk.heading_path {
             builder.values().append_value(heading);
@@ -161,6 +140,75 @@ const fn section_kind_str(kind: SectionKind) -> &'static str {
         SectionKind::BlockQuote => "block_quote",
         SectionKind::FrontMatter => "front_matter",
     }
+}
+
+/// Builds the `pii_metadata` column: `List<Struct{entity, confidence,
+/// offset_start, offset_end, anchors: List<Utf8>}>`, nullable per row.
+///
+/// A row is null when the chunk has no PII findings. Built by constructing
+/// the flat field arrays directly and assembling a `StructArray` + `ListArray`
+/// (avoids `StructBuilder`'s type-erased nested-builder downcast limitation).
+fn build_pii_metadata(chunks: &[ChunkSpec]) -> ListArray {
+    let mut entity_b = StringBuilder::new();
+    let mut conf_b = Float32Builder::new();
+    let mut start_b = Int32Builder::new();
+    let mut end_b = Int32Builder::new();
+    let mut anchors_b = ListBuilder::new(StringBuilder::new());
+
+    let mut offsets: Vec<i32> = Vec::with_capacity(chunks.len() + 1);
+    let mut null_builder = NullBufferBuilder::new(chunks.len());
+    offsets.push(0);
+
+    for chunk in chunks {
+        for f in &chunk.pii {
+            entity_b.append_value(&f.entity);
+            conf_b.append_value(f.confidence);
+            start_b.append_value(i32::try_from(f.offset_start).unwrap_or(i32::MAX));
+            end_b.append_value(i32::try_from(f.offset_end).unwrap_or(i32::MAX));
+            for a in &f.anchors_hit {
+                anchors_b.values().append_value(a);
+            }
+            anchors_b.append(true);
+        }
+        offsets.push(offsets.last().unwrap() + i32::try_from(chunk.pii.len()).unwrap_or(i32::MAX));
+        null_builder.append(!chunk.pii.is_empty());
+    }
+
+    let entity = entity_b.finish();
+    let conf = conf_b.finish();
+    let start = start_b.finish();
+    let end = end_b.finish();
+    let anchors = anchors_b.finish();
+
+    // Build the inner StructArray from the five flat field arrays.
+    let struct_fields = pii_fields();
+    let struct_values: Vec<ArrayRef> = vec![
+        Arc::new(entity),
+        Arc::new(conf),
+        Arc::new(start),
+        Arc::new(end),
+        Arc::new(anchors),
+    ];
+    let struct_array = StructArray::new(struct_fields.into(), struct_values, None);
+
+    // Wrap in the outer ListArray with per-chunk offsets + null bitmap.
+    let item_field = Arc::new(Field::new_struct("item", pii_fields(), true));
+    let offset_buffer = OffsetBuffer::new(offsets.into());
+    let nulls = null_builder.build();
+
+    ListArray::new(item_field, offset_buffer, Arc::new(struct_array), nulls)
+}
+
+/// The five typed [`Field`]s for the `pii_metadata` inner struct. Field
+/// order MUST match the column assembly in [`build_pii_metadata`].
+fn pii_fields() -> Vec<Field> {
+    vec![
+        Field::new("entity", DataType::Utf8, false),
+        Field::new("confidence", DataType::Float32, false),
+        Field::new("offset_start", DataType::Int32, false),
+        Field::new("offset_end", DataType::Int32, false),
+        Field::new_list("anchors", Field::new("item", DataType::Utf8, true), false),
+    ]
 }
 
 /// Builds an all-null `FixedSizeList<Float32, EMBEDDING_DIM>` column for the
@@ -200,12 +248,14 @@ fn build_real_embedding(embeddings: &[Vec<f32>], dim: usize) -> arrow::array::Fi
 mod tests {
     use super::*;
     use crate::arrow_io::output_schema;
+    use crate::scrub::PiiFinding;
     use arrow::array::Array;
 
     fn sample_chunks() -> Vec<ChunkSpec> {
         vec![
             ChunkSpec {
                 chunk_index: 0,
+                chunk_id: "a".repeat(64),
                 text: "First chunk.".to_string(),
                 token_count: 3,
                 source_path: "doc.md".to_string(),
@@ -213,9 +263,17 @@ mod tests {
                 section_kind: SectionKind::Paragraph,
                 char_offset_start: 0,
                 char_offset_end: 12,
+                pii: vec![PiiFinding {
+                    entity: "email".to_string(),
+                    offset_start: 0,
+                    offset_end: 5,
+                    confidence: 0.92,
+                    anchors_hit: vec!["mail".to_string()],
+                }],
             },
             ChunkSpec {
                 chunk_index: 1,
+                chunk_id: "b".repeat(64),
                 text: "Second chunk with code.".to_string(),
                 token_count: 5,
                 source_path: "doc.md".to_string(),
@@ -223,9 +281,11 @@ mod tests {
                 section_kind: SectionKind::Code,
                 char_offset_start: 12,
                 char_offset_end: 35,
+                pii: vec![],
             },
             ChunkSpec {
                 chunk_index: 2,
+                chunk_id: "c".repeat(64),
                 text: "Third.".to_string(),
                 token_count: 1,
                 source_path: "doc.md".to_string(),
@@ -233,6 +293,7 @@ mod tests {
                 section_kind: SectionKind::ListItem,
                 char_offset_start: 35,
                 char_offset_end: 41,
+                pii: vec![],
             },
         ]
     }
@@ -242,28 +303,27 @@ mod tests {
         let chunks = sample_chunks();
         let batch = chunks_to_batch(&chunks).expect("batch should build");
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 9);
+        assert_eq!(batch.num_columns(), 11);
         assert_eq!(batch.schema().as_ref(), output_schema().as_ref());
     }
 
     #[test]
-    fn chunk_index_column_is_correct() {
+    fn chunk_id_column_is_correct() {
         let batch = chunks_to_batch(&sample_chunks()).unwrap();
         let col = batch
-            .column(0)
+            .column(1)
             .as_any()
-            .downcast_ref::<UInt32Array>()
-            .expect("chunk_index should be UInt32");
-        assert_eq!(col.value(0), 0);
-        assert_eq!(col.value(1), 1);
-        assert_eq!(col.value(2), 2);
+            .downcast_ref::<StringArray>()
+            .expect("chunk_id should be Utf8");
+        assert_eq!(col.value(0), "a".repeat(64));
+        assert_eq!(col.value(1), "b".repeat(64));
     }
 
     #[test]
     fn text_column_preserves_content() {
         let batch = chunks_to_batch(&sample_chunks()).unwrap();
         let col = batch
-            .column(1)
+            .column(2)
             .as_any()
             .downcast_ref::<StringArray>()
             .expect("text should be Utf8");
@@ -276,34 +336,32 @@ mod tests {
     fn heading_path_handles_empty_and_nested() {
         let batch = chunks_to_batch(&sample_chunks()).unwrap();
         let col = batch
-            .column(4)
+            .column(5)
             .as_any()
             .downcast_ref::<ListArray>()
             .expect("heading_path should be List");
-
-        // Row 0: ["Intro"] — non-null
-        assert!(!col.is_null(0));
-        // Row 2: [] — null (empty heading_path)
-        assert!(col.is_null(2));
+        assert!(!col.is_null(0), "row 0 should be non-null");
+        assert!(col.is_null(2), "row 2 should be null (empty heading_path)");
     }
 
     #[test]
-    fn section_kind_dictionary_round_trips() {
+    fn pii_metadata_column_populates_findings() {
         let batch = chunks_to_batch(&sample_chunks()).unwrap();
-        let col = batch.column(5);
-        assert_eq!(
-            col.data_type(),
-            &arrow::datatypes::DataType::Dictionary(
-                Box::new(arrow::datatypes::DataType::Int8),
-                Box::new(arrow::datatypes::DataType::Utf8),
-            ),
-        );
+        let col = batch
+            .column(9)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .expect("pii_metadata should be List");
+        // Row 0 has one finding (non-null); rows 1 and 2 have none (null).
+        assert!(!col.is_null(0), "row 0 should have pii_metadata");
+        assert!(col.is_null(1), "row 1 should have null pii_metadata");
+        assert!(col.is_null(2), "row 2 should have null pii_metadata");
     }
 
     #[test]
     fn embedding_column_is_all_null() {
         let batch = chunks_to_batch(&sample_chunks()).unwrap();
-        let col = batch.column(8);
+        let col = batch.column(10);
         assert_eq!(col.null_count(), 3);
     }
 
@@ -311,6 +369,6 @@ mod tests {
     fn empty_chunks_produces_empty_batch() {
         let batch = chunks_to_batch(&[]).expect("empty batch should build");
         assert_eq!(batch.num_rows(), 0);
-        assert_eq!(batch.num_columns(), 9);
+        assert_eq!(batch.num_columns(), 11);
     }
 }
