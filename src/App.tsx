@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Landing } from './components/Landing';
+import { AuditLog } from './components/AuditLog';
+import { HelpPopup } from './components/HelpPopup';
 import {
   ensureInitialized,
   getVersion,
@@ -32,13 +34,13 @@ type ArrowBytes = Uint8Array;
 
 const DEFAULT_CONFIG: PipelineConfig = {
   format: 'markdown',
-  scrub: { patterns: ['email'], custom: [] },
+  scrub: { patterns: ['email'], custom: [], anchor_window: 7, min_confidence: 0 },
   chunk: { max_tokens: 512, overlap_tokens: 0, tokenizer: 'cl100k_base' },
 };
 
 const FORMATS = ['markdown', 'text', 'html', 'json'] as const;
 const TOKENIZERS = ['cl100k_base', 'o200k_base', 'r50k_base', 'p50k_base', 'p50k_edit', 'o200k_harmony'] as const;
-const PII_PATTERNS = ['email', 'ssn', 'phone', 'credit_card', 'aws_key', 'github_pat', 'jwt'] as const;
+const PII_PATTERNS = ['email', 'ssn', 'phone', 'credit_card', 'routing_number', 'aws_key', 'github_pat', 'jwt'] as const;
 
 export default function App() {
   const [view, setView] = useState<'landing' | 'tool'>('landing');
@@ -57,6 +59,9 @@ function Tool({ onBack }: { onBack: () => void }) {
   const [chunks, setChunks] = useState<ChunkRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
+  const [originalText, setOriginalText] = useState('');
+  const [viewMode, setViewMode] = useState<'chunks' | 'audit'>('chunks');
+  const [lastResult, setLastResult] = useState<{ elapsedMs: number; inputBytes: number; findingCount: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const profileInputRef = useRef<HTMLInputElement>(null);
   const tableRef = useRef<ArrowBytes | null>(null);
@@ -107,6 +112,8 @@ function Tool({ onBack }: { onBack: () => void }) {
       setLoading(true);
       setError(null);
       setFileName(file.name);
+      setOriginalText('');
+      setLastResult(null);
       tableRef.current = null;
       setChunks([]);
       setEmbeddings(null);
@@ -134,10 +141,16 @@ function Tool({ onBack }: { onBack: () => void }) {
           engineFormat = config.format;
         }
 
+        // Store original text for the audit-log highlight view.
+        setOriginalText(new TextDecoder().decode(engineBytes));
+
         const cfg: PipelineConfig = { ...config, format: engineFormat as PipelineConfig['format'], source_label: file.name };
         const result = await processDocument(cfg, engineBytes);
         setChunks(result.chunks);
         tableRef.current = result.arrowBytes;
+        setLastResult({ elapsedMs: result.elapsedMs, inputBytes: result.inputBytes, findingCount: result.findingCount });
+        // Auto-switch to audit view if findings exist.
+        if (result.findingCount > 0) setViewMode('audit');
       } catch (e) {
         setError(String(e));
         setChunks([]);
@@ -234,26 +247,54 @@ function Tool({ onBack }: { onBack: () => void }) {
         </div>
 
         <div className="config-bar">
-          <label>Format
+          <label>Format <HelpPopup>
+            <strong>Document format</strong><br />
+            Selects the parser. <code>markdown</code> uses pulldown-cmark (GFM).
+            <code>html</code> extracts headings, paragraphs, code blocks, tables.
+            <code>json</code> treats each object key as a heading path.
+            <code>text</code> splits on blank lines. Auto-detected from file extension
+            when you drop a file.
+          </HelpPopup>
             <select value={config.format} onChange={(e) => setConfig({ ...config, format: e.target.value as PipelineConfig['format'] })}>
               {FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </label>
-          <label>Tokenizer
+          <label>Tokenizer <HelpPopup>
+            <strong>BPE tokenizer</strong><br />
+            Determines how token counts are calculated for chunk boundaries.
+            <code>cl100k_base</code>: GPT-3.5/4. <code>o200k_base</code>: GPT-4o/4.1.
+            <code>r50k_base</code>: GPT-3/davinci. Match this to your embedding/LLM model.
+          </HelpPopup>
             <select value={config.chunk.tokenizer} onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, tokenizer: e.target.value } })}>
               {TOKENIZERS.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </label>
-          <label>Max Tokens: {config.chunk.max_tokens}
+          <label>Max Tokens: {config.chunk.max_tokens} <HelpPopup>
+            <strong>Maximum tokens per chunk</strong><br />
+            The chunker packs spans until this limit is reached, then starts a new chunk.
+            Typical RAG values: <code>256–512</code> for retrieval, <code>1024+</code> for
+            long-context models. Never exceeds this value.
+          </HelpPopup>
             <input type="range" min="64" max="2048" step="64" value={config.chunk.max_tokens}
               onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, max_tokens: Number(e.target.value) } })} />
           </label>
-          <label>Overlap: {config.chunk.overlap_tokens}
+          <label>Overlap: {config.chunk.overlap_tokens} <HelpPopup>
+            <strong>Token overlap between adjacent chunks</strong><br />
+            Repeats the last N tokens of each chunk at the start of the next, so context
+            spans chunk boundaries. <code>0</code> = no overlap (default). Typical: 32–64.
+            Only applies to structural chunking.
+          </HelpPopup>
             <input type="range" min="0" max="256" step="16" value={config.chunk.overlap_tokens}
               onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, overlap_tokens: Number(e.target.value) } })} />
           </label>
           <fieldset className="fieldset">
-            <legend>PII Scrubbing</legend>
+            <legend>PII Scrubbing <HelpPopup>
+              <strong>PII detection patterns</strong><br />
+              Each pattern runs <strong>before</strong> tokenization so PII can't cross chunk
+              boundaries. Credit cards pass Luhn mod-10; routing numbers pass ABA checksum.
+              Confidence is boosted by <strong>contextual anchor keywords</strong> (e.g. "social
+              security" near an SSN). See the Audit Log tab for per-finding scores and anchors.
+            </HelpPopup></legend>
             {PII_PATTERNS.map((p) => (
               <label key={p} className="checkbox-label">
                 <input type="checkbox" checked={config.scrub.patterns.includes(p)}
@@ -277,6 +318,26 @@ function Tool({ onBack }: { onBack: () => void }) {
               ))}
               <button className="btn-outline btn-tiny" onClick={addCustom}>+ add pattern</button>
             </div>
+            <div className="scrub-tuning">
+              <label>Anchor window: {config.scrub.anchor_window ?? 7} words <HelpPopup>
+                <strong>Contextual anchor half-window</strong><br />
+                For each PII candidate, the scrubber scans ±N words for keyword anchors
+                (e.g. "ssn", "credit card", "routing"). Each anchor hit boosts confidence by
+                0.10. <code>0</code> disables anchor boosting entirely.
+              </HelpPopup>
+                <input type="range" min="0" max="20" step="1" value={config.scrub.anchor_window ?? 7}
+                  onChange={(e) => setConfig({ ...config, scrub: { ...config.scrub, anchor_window: Number(e.target.value) } })} />
+              </label>
+              <label>Min confidence: {((config.scrub.min_confidence ?? 0) * 100).toFixed(0)}% <HelpPopup>
+                <strong>Minimum confidence threshold</strong><br />
+                Candidates below this score are dropped entirely (not scrubbed, not reported).
+                Default <code>0%</code> keeps everything. Raise to <code>65%+</code> to suppress
+                low-confidence matches. Useful for reducing false positives on ambiguous patterns.
+              </HelpPopup>
+                <input type="range" min="0" max="0.99" step="0.05" value={config.scrub.min_confidence ?? 0}
+                  onChange={(e) => setConfig({ ...config, scrub: { ...config.scrub, min_confidence: Number(e.target.value) } })} />
+              </label>
+            </div>
           </fieldset>
         </div>
 
@@ -294,10 +355,44 @@ function Tool({ onBack }: { onBack: () => void }) {
 
         {chunks.length > 0 && (
           <div className="results-section">
-            <div className="stats">
-              <strong>{chunks.length}</strong> chunks · <strong>{totalTokens}</strong> tokens · <strong>{(totalTokens / chunks.length).toFixed(0)}</strong> avg
+            <div className="metrics-bar">
+              <span className="metric">
+                <strong>{chunks.length}</strong> chunks
+              </span>
+              <span className="metric">
+                <strong>{totalTokens}</strong> tokens
+              </span>
+              <span className="metric">
+                <strong>{(totalTokens / chunks.length).toFixed(0)}</strong> avg tok/chunk
+              </span>
+              {lastResult && (
+                <>
+                  <span className="metric" title="Input size / processing time">
+                    <strong>{(lastResult.inputBytes / 1024 / Math.max(lastResult.elapsedMs, 1) * 1000 / 1024).toFixed(1)}</strong> MB/s
+                  </span>
+                  <span className="metric" title="PII entities scrubbed">
+                    <strong>{lastResult.findingCount}</strong> PII scrubbed
+                  </span>
+                  <span className="metric metric-badge" title="No network requests during processing">
+                    ✓ Zero egress
+                  </span>
+                </>
+              )}
             </div>
 
+            <div className="view-toggle">
+              <button className={viewMode === 'chunks' ? 'toggle-btn active' : 'toggle-btn'} onClick={() => setViewMode('chunks')}>
+                Chunk table
+              </button>
+              <button className={viewMode === 'audit' ? 'toggle-btn active' : 'toggle-btn'} onClick={() => setViewMode('audit')}>
+                Audit log {lastResult && lastResult.findingCount > 0 ? `(${lastResult.findingCount})` : ''}
+              </button>
+            </div>
+
+            {viewMode === 'audit' ? (
+              <AuditLog chunks={chunks} originalText={originalText} />
+            ) : (
+              <>
             <div className="export-bar">
               <button className="btn-outline" onClick={() => exportJSON(chunks, fileName)}>JSON</button>
               <button className="btn-outline" onClick={() => exportCSV(chunks, fileName)}>CSV</button>
@@ -388,6 +483,8 @@ function Tool({ onBack }: { onBack: () => void }) {
                   })}
                 </div>
               </div>
+            )}
+              </>
             )}
           </div>
         )}

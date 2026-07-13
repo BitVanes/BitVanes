@@ -5,7 +5,7 @@
     "BitVanes Contributors"
   ],
   "description": "Thin wasm-bindgen wrapper exposing bitvanes-core to JavaScript via zero-copy Arrow FFI.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

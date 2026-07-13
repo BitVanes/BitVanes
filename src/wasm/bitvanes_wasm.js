@@ -69,7 +69,9 @@ export function process(config_js, bytes) {
  * Processes a document and returns chunk data as a JS array (via serde,
  * NOT zero-copy Arrow FFI). Fallback for when `parseRecordBatch` fails.
  *
- * Each element is `{ chunk_index, text, token_count, heading_path, section_kind }`.
+ * Each element carries the chunk text, token count, heading ancestry,
+ * section kind, deterministic `chunk_id`, and the PII findings whose
+ * original-text ranges overlap the chunk.
  * @param {any} config_js
  * @param {Uint8Array} bytes
  * @returns {any}
