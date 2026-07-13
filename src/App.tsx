@@ -247,54 +247,59 @@ function Tool({ onBack }: { onBack: () => void }) {
         </div>
 
         <div className="config-bar">
-          <label>Format <HelpPopup>
-            <strong>Document format</strong><br />
-            Selects the parser. <code>markdown</code> uses pulldown-cmark (GFM).
-            <code>html</code> extracts headings, paragraphs, code blocks, tables.
-            <code>json</code> treats each object key as a heading path.
-            <code>text</code> splits on blank lines. Auto-detected from file extension
-            when you drop a file.
-          </HelpPopup>
-            <select value={config.format} onChange={(e) => setConfig({ ...config, format: e.target.value as PipelineConfig['format'] })}>
-              {FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
-            </select>
-          </label>
-          <label>Tokenizer <HelpPopup>
-            <strong>BPE tokenizer</strong><br />
-            Determines how token counts are calculated for chunk boundaries.
-            <code>cl100k_base</code>: GPT-3.5/4. <code>o200k_base</code>: GPT-4o/4.1.
-            <code>r50k_base</code>: GPT-3/davinci. Match this to your embedding/LLM model.
-          </HelpPopup>
-            <select value={config.chunk.tokenizer} onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, tokenizer: e.target.value } })}>
-              {TOKENIZERS.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </label>
-          <label>Max Tokens: {config.chunk.max_tokens} <HelpPopup>
-            <strong>Maximum tokens per chunk</strong><br />
-            The chunker packs spans until this limit is reached, then starts a new chunk.
-            Typical RAG values: <code>256–512</code> for retrieval, <code>1024+</code> for
-            long-context models. Never exceeds this value.
-          </HelpPopup>
-            <input type="range" min="64" max="2048" step="64" value={config.chunk.max_tokens}
-              onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, max_tokens: Number(e.target.value) } })} />
-          </label>
-          <label>Overlap: {config.chunk.overlap_tokens} <HelpPopup>
-            <strong>Token overlap between adjacent chunks</strong><br />
-            Repeats the last N tokens of each chunk at the start of the next, so context
-            spans chunk boundaries. <code>0</code> = no overlap (default). Typical: 32–64.
-            Only applies to structural chunking.
-          </HelpPopup>
-            <input type="range" min="0" max="256" step="16" value={config.chunk.overlap_tokens}
-              onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, overlap_tokens: Number(e.target.value) } })} />
-          </label>
-          <fieldset className="fieldset">
-            <legend>PII Scrubbing <HelpPopup>
-              <strong>PII detection patterns</strong><br />
-              Each pattern runs <strong>before</strong> tokenization so PII can't cross chunk
-              boundaries. Credit cards pass Luhn mod-10; routing numbers pass ABA checksum.
-              Confidence is boosted by <strong>contextual anchor keywords</strong> (e.g. "social
-              security" near an SSN). See the Audit Log tab for per-finding scores and anchors.
-            </HelpPopup></legend>
+          <div className="config-group">
+            <div className="config-group-title">Pipeline Settings</div>
+            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+              <label>Format <HelpPopup>
+                <strong>Document format</strong><br />
+                Selects the parser. <code>markdown</code>: pulldown-cmark (GFM).
+                <code>html</code>: headings, paragraphs, code blocks, tables.
+                <code>json</code>: each object key becomes a heading path.
+                <code>text</code>: splits on blank lines. Auto-detected from file extension.
+              </HelpPopup>
+                <select value={config.format} onChange={(e) => setConfig({ ...config, format: e.target.value as PipelineConfig['format'] })}>
+                  {FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </label>
+              <label>Tokenizer <HelpPopup>
+                <strong>BPE tokenizer</strong><br />
+                Determines token counting for chunk boundaries. Match to your target model:
+                <code>cl100k_base</code> → GPT-3.5/4. <code>o200k_base</code> → GPT-4o/4.1.
+              </HelpPopup>
+                <select value={config.chunk.tokenizer} onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, tokenizer: e.target.value } })}>
+                  {TOKENIZERS.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', flex: 1 }}>
+              <label style={{ flex: 1, minWidth: 140 }}>Max Tokens: {config.chunk.max_tokens} <HelpPopup>
+                <strong>Maximum tokens per chunk</strong><br />
+                The chunker packs text until this limit, then starts a new chunk. Typical RAG:
+                <code>256–512</code> for retrieval, <code>1024+</code> for long-context models.
+              </HelpPopup>
+                <input type="range" min="64" max="2048" step="64" value={config.chunk.max_tokens}
+                  onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, max_tokens: Number(e.target.value) } })} />
+              </label>
+              <label style={{ flex: 1, minWidth: 140 }}>Overlap: {config.chunk.overlap_tokens} <HelpPopup>
+                <strong>Token overlap between chunks</strong><br />
+                Repeats the last N tokens of each chunk at the start of the next, so context
+                spans boundaries. <code>0</code> = no overlap (default). Typical: 32–64.
+              </HelpPopup>
+                <input type="range" min="0" max="256" step="16" value={config.chunk.overlap_tokens}
+                  onChange={(e) => setConfig({ ...config, chunk: { ...config.chunk, overlap_tokens: Number(e.target.value) } })} />
+              </label>
+            </div>
+          </div>
+
+          <div className="config-group">
+            <div className="config-group-title">PII Scrubbing</div>
+            <fieldset className="fieldset">
+              <legend><span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>Patterns <HelpPopup>
+                <strong>PII detection patterns</strong><br />
+                Each pattern runs <strong>before</strong> tokenization so PII can't cross chunk
+                boundaries. Credit cards pass Luhn mod-10; routing numbers pass ABA checksum.
+                See the Audit Log for per-finding scores.
+              </HelpPopup></span></legend>
             {PII_PATTERNS.map((p) => (
               <label key={p} className="checkbox-label">
                 <input type="checkbox" checked={config.scrub.patterns.includes(p)}
@@ -339,6 +344,7 @@ function Tool({ onBack }: { onBack: () => void }) {
               </label>
             </div>
           </fieldset>
+          </div>
         </div>
 
         <div className="dropzone" onClick={() => fileInputRef.current?.click()}
@@ -346,9 +352,9 @@ function Tool({ onBack }: { onBack: () => void }) {
           onDragOver={(e) => e.preventDefault()}>
           <input ref={fileInputRef} type="file" style={{ display: 'none' }}
             onChange={(e) => { const file = e.target.files?.[0]; if (file) handleFile(file); }} />
-          {loading ? <span className="dropzone-text">Processing…</span>
-            : fileName ? <span className="dropzone-text">{fileName} — drop another to reprocess</span>
-            : <span className="dropzone-text">Drop a .pdf / .md / .txt / .html file here</span>}
+          {loading ? <><div className="dropzone-icon">⏳</div><span className="dropzone-text">Processing…</span></>
+            : fileName ? <><div className="dropzone-icon">📄</div><span className="dropzone-text">{fileName}</span><br /><span className="dropzone-text" style={{ opacity: 0.6, fontSize: 13 }}>Drop another file to reprocess</span></>
+            : <><div className="dropzone-icon">📁</div><span className="dropzone-text">Drop a .md / .txt / .html / .json / .pdf file here</span><br /><span className="dropzone-text" style={{ opacity: 0.5, fontSize: 12 }}>or click to browse</span></>}
         </div>
 
         {error && <div className="error-msg">{error}</div>}
@@ -356,26 +362,32 @@ function Tool({ onBack }: { onBack: () => void }) {
         {chunks.length > 0 && (
           <div className="results-section">
             <div className="metrics-bar">
-              <span className="metric">
-                <strong>{chunks.length}</strong> chunks
-              </span>
-              <span className="metric">
-                <strong>{totalTokens}</strong> tokens
-              </span>
-              <span className="metric">
-                <strong>{(totalTokens / chunks.length).toFixed(0)}</strong> avg tok/chunk
-              </span>
+              <div className="metric-card">
+                <span className="metric-label">Chunks</span>
+                <span className="metric-value">{chunks.length}</span>
+              </div>
+              <div className="metric-card">
+                <span className="metric-label">Total tokens</span>
+                <span className="metric-value">{totalTokens}</span>
+              </div>
+              <div className="metric-card">
+                <span className="metric-label">Avg tok/chunk</span>
+                <span className="metric-value">{(totalTokens / chunks.length).toFixed(0)}</span>
+              </div>
               {lastResult && (
                 <>
-                  <span className="metric" title="Input size / processing time">
-                    <strong>{(lastResult.inputBytes / 1024 / Math.max(lastResult.elapsedMs, 1) * 1000 / 1024).toFixed(1)}</strong> MB/s
-                  </span>
-                  <span className="metric" title="PII entities scrubbed">
-                    <strong>{lastResult.findingCount}</strong> PII scrubbed
-                  </span>
-                  <span className="metric metric-badge" title="No network requests during processing">
-                    ✓ Zero egress
-                  </span>
+                  <div className="metric-card">
+                    <span className="metric-label">Throughput</span>
+                    <span className="metric-value">{(lastResult.inputBytes / 1024 / Math.max(lastResult.elapsedMs, 1) * 1000 / 1024).toFixed(1)}<span className="metric-unit"> MB/s</span></span>
+                  </div>
+                  <div className="metric-card">
+                    <span className="metric-label">PII scrubbed</span>
+                    <span className="metric-value">{lastResult.findingCount}</span>
+                  </div>
+                  <div className="metric-card metric-badge-card">
+                    <span className="metric-label">Network</span>
+                    <span className="metric-value">✓ Zero egress</span>
+                  </div>
                 </>
               )}
             </div>
