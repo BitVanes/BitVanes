@@ -12,7 +12,10 @@
 import { signAsync } from '@noble/ed25519';
 
 const ISSUER = 'bitvanes.com';
-const DEFAULT_DURATION_DAYS = 365;
+// Lifetime licenses: a 100-year signed expiry window. The JWT is verifiable
+// offline forever; the far-future exp is "lifetime" for any practical purpose
+// while keeping the signature meaningful (no exp = unverifiable drift).
+const LIFETIME_DAYS = 365 * 100;
 
 /** Decode a hex string to a Uint8Array. */
 function hexToBytes(hex) {
@@ -36,10 +39,11 @@ function b64uJson(obj) {
  *   from `BITVANES_LICENSE_PRIVATE_KEY`.
  * @param {string} opts.email        — Customer identifier (JWT `sub`).
  * @param {'solo'|'business'} opts.tier — License tier.
- * @param {number} [opts.durationDays=365] — Validity window.
+ * @param {number} [opts.durationDays=LIFETIME] — Validity window in days
+ *   (defaults to lifetime = 100 years).
  * @returns {Promise<{licenseKey: string, tier: string, exp: string}>}
  */
-export async function mintLicense({ privateKeyHex, email, tier, durationDays = DEFAULT_DURATION_DAYS }) {
+export async function mintLicense({ privateKeyHex, email, tier, durationDays = LIFETIME_DAYS }) {
   if (!privateKeyHex) throw new Error('BITVANES_LICENSE_PRIVATE_KEY is not set');
   if (tier !== 'solo' && tier !== 'business') {
     throw new Error(`invalid tier '${tier}' (expected solo|business)`);

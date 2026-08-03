@@ -208,8 +208,9 @@ function Pricing() {
     <section className="pricing" id="pricing">
       <h2>Free to start. Pay only if you need the heavy lifting.</h2>
       <p className="pricing-sub">
-        The free tier covers everyday text redaction. A one-time key unlocks
-        documents and automation — verified offline, nothing phones home.
+        Free to start. Pay once for lifetime access to the heavy lifting —
+        PDF/office formats, name detection, batch. Keys are verified offline;
+        nothing phones home.
       </p>
       <div className="tiers">
         <div className="tier">
@@ -229,9 +230,9 @@ function Pricing() {
           <div className="tier-badge">Most popular</div>
           <h3>Solo</h3>
           <div className="price">
-            $12<span className="price-sub">/mo · $99/yr</span>
+            $99<span className="price-sub">once · lifetime</span>
           </div>
-          <p className="tier-tag">For one person handling real documents.</p>
+          <p className="tier-tag">For one person handling real documents. Pay once, own forever.</p>
           <ul>
             <li>Everything in Free, plus:</li>
             <li>⚡ PDF redaction (delete + flatten)</li>
@@ -246,9 +247,9 @@ function Pricing() {
         <div className="tier">
           <h3>Business</h3>
           <div className="price">
-            $49<span className="price-sub">/mo · $399/yr</span>
+            $399<span className="price-sub">once · lifetime</span>
           </div>
-          <p className="tier-tag">For teams that process a lot.</p>
+          <p className="tier-tag">For teams that process a lot. 5 seats, one-time.</p>
           <ul>
             <li>Everything in Solo, plus:</li>
             <li>👥 5 seats</li>
@@ -307,7 +308,10 @@ function ForAgents() {
         </div>
       </div>
       <p className="agent-foot">
-        Solo <strong>$99/yr</strong> · Business <strong>$399/yr</strong> · USDC on Base. Keys are Ed25519-signed JWTs, verified fully offline — your agent never has to trust a server, just the embedded public key.
+        Solo <strong>$99 lifetime</strong> · Business <strong>$399 lifetime</strong> · USDC on Base.
+        Keys are Ed25519-signed JWTs with a 100-year validity window, verified
+        fully offline — your agent never has to trust a server, just the
+        embedded public key.
       </p>
     </section>
   );

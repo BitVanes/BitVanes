@@ -13,20 +13,20 @@
   "offerings": [
     {
       "id": "solo",
-      "name": "BitVanes Solo (annual)",
-      "description": "1 seat. Unlocks PDF redaction, office formats, name detection, batch processing.",
+      "name": "BitVanes Solo (lifetime)",
+      "description": "1 seat. Unlocks PDF redaction, office formats, name detection, batch processing. Pay once, own forever.",
       "price": "99.00",
       "currency": "USDC",
-      "period": "year",
+      "period": "lifetime",
       "endpoint": "https://bitvanes.com/api/v1/license/x402?tier=solo"
     },
     {
       "id": "business",
-      "name": "BitVanes Business (annual)",
-      "description": "5 seats. Everything in Solo plus custom rule builder and audit logging.",
+      "name": "BitVanes Business (lifetime)",
+      "description": "5 seats. Everything in Solo plus custom rule builder and audit logging. Pay once, own forever.",
       "price": "399.00",
       "currency": "USDC",
-      "period": "year",
+      "period": "lifetime",
       "endpoint": "https://bitvanes.com/api/v1/license/x402?tier=business"
     }
   ],

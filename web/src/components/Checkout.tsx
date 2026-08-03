@@ -86,7 +86,7 @@ export default function Checkout() {
             <div className="checkout-buttons">
               <div className="checkout-tier">
                 <div className="checkout-tier-head">
-                  <strong>Solo</strong> <span>$99 / year</span>
+                  <strong>Solo</strong> <span>$99 lifetime</span>
                 </div>
                 {validEmail && (
                   <PayPalButtons
@@ -99,7 +99,7 @@ export default function Checkout() {
               </div>
               <div className="checkout-tier">
                 <div className="checkout-tier-head">
-                  <strong>Business</strong> <span>$399 / year</span>
+                  <strong>Business</strong> <span>$399 lifetime</span>
                 </div>
                 {validEmail && (
                   <PayPalButtons
