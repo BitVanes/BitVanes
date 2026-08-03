@@ -1,0 +1,19 @@
+/target
+**/target/
+*.rs.bk
+.cargo/config.local.toml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local run artifacts
+/output*.json
+/output*.csv
+/output*.arrow

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Build
+        run: cargo build --release
+      - name: Smoke test
+        run: |
+          set -e
+          BIN=./target/release/bitvanes
+          # --no-tui with no input prints help (and exits successfully).
+          $BIN --no-tui | head -1
+          # Markdown -> JSON / CSV / Arrow IPC
+          printf '# Hello\n\nThis is a test document.\n\nContact alice@example.com.\n' > /tmp/t.md
+          $BIN --no-tui -i /tmp/t.md -f markdown --scrub email -o /tmp/out.json
+          grep -q '"text"' /tmp/out.json
+          $BIN --no-tui -i /tmp/t.md -f markdown -o /tmp/out.csv
+          head -1 /tmp/out.csv | grep -q 'chunk_index'
+          $BIN --no-tui -i /tmp/t.md -f markdown -o /tmp/out.arrow
+          test -s /tmp/out.arrow
+          # JSON input
+          printf '{"name":"BitVanes","tags":["a","b"]}' > /tmp/t.json
+          $BIN --no-tui -i /tmp/t.json -o /tmp/outj.json
+          grep -q 'BitVanes' /tmp/outj.json
+          # Directory walk picks up all supported extensions
+          mkdir -p /tmp/docs && cp /tmp/t.md /tmp/docs/ && cp /tmp/t.json /tmp/docs/
+          $BIN --no-tui -i /tmp/docs/ -o /tmp/dir.json
+          grep -q '"chunk_index"' /tmp/dir.json
