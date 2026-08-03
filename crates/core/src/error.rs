@@ -24,8 +24,7 @@ pub enum BitVanesError {
     InvalidConfig(String),
 
     /// A requested optional feature was not compiled into this build (for
-    /// example, the `embeddings` feature is disabled but an embedding
-    /// config was supplied). Reserved for future gateable features.
+    /// example, a parser requested without its cargo feature enabled).
     #[error("feature not enabled: {0}")]
     FeatureNotEnabled(&'static str),
 

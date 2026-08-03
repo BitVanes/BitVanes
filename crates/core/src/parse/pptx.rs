@@ -3,7 +3,7 @@
 //! Opens the `.pptx` ZIP container, enumerates `ppt/slides/slideN.xml` files
 //! in numeric order, and extracts text runs (`<a:t>`) from each slide. Each
 //! slide becomes a [`TextSpan`] with `heading_path = ["Slide N"]`, so chunks
-//! carry slide-level lineage for RAG retrieval.
+//! carry slide-level lineage for downstream retrieval.
 
 use quick_xml::Reader;
 use quick_xml::events::Event;

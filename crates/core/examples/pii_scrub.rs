@@ -7,7 +7,7 @@ use bitvanes_core::{
     BuiltInPattern, ChunkConfig, PipelineConfig, ScrubProfile, TokenizerKind,
     chunk::chunk_document,
     parse::{MarkdownParser, Parser},
-    scrub::scrub_document,
+    pii::scrub_document,
 };
 
 fn main() -> bitvanes_core::Result<()> {

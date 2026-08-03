@@ -1,18 +1,18 @@
 # Security Policy
 
-BitVanes is a **zero-trust** document ETL engine. Security and data
+BitVanes is a **zero-trust** data purification engine. Security and data
 isolation are core design properties, not add-ons.
 
 ## Zero-telemetry guarantee
 
-- BPE vocab files are embedded at compile time by `tiktoken-rs` via
-  `include_str!`. The dependency contains **no network code** and exposes no
-  feature to disable embedding. No tokenization request ever leaves the
-  process.
+- BPE vocab files are compiled in at build time by `tiktoken-rs` via
+  `include_str!`. The dependency contains **no network code**. No
+  tokenization request ever leaves the process.
 - The pipeline makes **no network calls** during parse, scrub, chunk, or
   Arrow assembly.
 - In the browser, all processing happens in a sandboxed Web Worker; document
-  bytes never leave the user's machine.
+  bytes never leave the user's machine. (The browser path is being phased out
+  — see `REBRAND.md`.)
 
 ## Reporting a vulnerability
 
@@ -28,8 +28,8 @@ Only the most recent minor release receives security fixes.
 
 | Version | Supported |
 |---------|-----------|
-| 0.2.x   | ✅        |
-| < 0.2   | ❌        |
+| 0.5.x   | ✅        |
+| < 0.5   | ❌        |
 
 ## PII scrubbing scope
 
@@ -38,3 +38,7 @@ The built-in PII patterns are a best-effort first line of defense and are
 pre-tokenization so matches cannot be split across chunk boundaries, but
 recall depends on input formatting (e.g., phone matching is E.164-only). Do
 not rely on it as the sole control for regulated data.
+
+> TODO(phase-4): destructive PDF redaction (content-stream removal / page
+> flattening) is tracked under the purification rebrand. Until it lands, PDF
+> output is text-layer only.

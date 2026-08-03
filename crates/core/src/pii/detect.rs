@@ -248,6 +248,21 @@ const ANCHOR_CREDIT_CARD: &[&str] = &[
     "expiry",
 ];
 const ANCHOR_ROUTING: &[&str] = &["routing", "aba", "transit", "bank", "checking", "account"];
+const ANCHOR_STREET: &[&str] = &[
+    "address",
+    "street",
+    "residence",
+    "residential",
+    "home",
+    "house",
+    "reside",
+    "live",
+    "living",
+    "located",
+    "mailing",
+    "ship",
+    "deliver",
+];
 const ANCHOR_AWS: &[&str] = &["aws", "access", "key", "iam", "credential", "secret"];
 const ANCHOR_GITHUB: &[&str] = &["github", "token", "pat", "gh", "gist"];
 const ANCHOR_JWT: &[&str] = &["jwt", "bearer", "token", "authorization", "auth"];
@@ -699,6 +714,14 @@ fn builtin_config(
             0.55,
             ANCHOR_ROUTING,
         ),
+        BuiltInPattern::StreetAddress => (
+            r"\b\d{1,6}\s+[A-Z][A-Za-z.''-]*(?:\s+[A-Z][A-Za-z.''-]*){0,4}\s+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Court|Ct|Way|Place|Pl|Parkway|Pkwy|Circle|Cir)\b",
+            "[STREET_ADDRESS]",
+            Validator::None,
+            "street_address",
+            0.45,
+            ANCHOR_STREET,
+        ),
         BuiltInPattern::AwsKey => (
             r"\bAKIA[0-9A-Z]{16}\b",
             "[AWS_KEY]",
@@ -994,6 +1017,30 @@ mod tests {
             "invalid ABA should NOT be redacted"
         );
         assert!(map.is_empty());
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn street_address_is_redacted() {
+        let (out, _map, findings) = scrub_with(
+            "Mailing address: 123 Main Street, Springfield.",
+            &[BuiltInPattern::StreetAddress],
+        );
+        assert_eq!(out, "Mailing address: [STREET_ADDRESS], Springfield.");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].entity, "street_address");
+        // "mailing" / "address" anchors should fire.
+        assert!(!findings[0].anchors_hit.is_empty());
+    }
+
+    #[test]
+    fn street_address_ignores_lowercase_prose() {
+        // No building number + capitalized street name => no match.
+        let (out, _map, findings) = scrub_with(
+            "walking down the street now",
+            &[BuiltInPattern::StreetAddress],
+        );
+        assert_eq!(out, "walking down the street now");
         assert!(findings.is_empty());
     }
 

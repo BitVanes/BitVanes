@@ -10,7 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 authors.workspace = true
 readme.workspace = true
-description = "Zero-trust ETL engine: parse, scrub, tokenize, chunk, and emit Apache Arrow columnar memory."
+description = "Zero-trust data purification engine: detect, redact, and sanitize PII across document and byte streams."
 
 [lib]
 crate-type = ["rlib"]
@@ -32,10 +32,6 @@ csv = ["arrow/csv"]
 # wasm build never enables this.
 cli-pdf = ["dep:pdf-extract"]
 
-# On-device embedding generation via ONNX Runtime. Native-only.
-# Implies `parallel` for batch-wise embedding inference.
-embeddings = ["dep:ort", "dep:tokenizers", "dep:ndarray", "parallel"]
-
 # Rayon-based parallel batch processing + parallel intra-doc regex sweep.
 # Native-only.
 parallel = ["dep:rayon"]
@@ -47,15 +43,28 @@ office = ["dep:zip", "dep:quick-xml", "dep:calamine", "dep:rtf-parser"]
 # Memory-mapped file I/O for large files (>1 MB). Native-only.
 mmap = ["dep:memmap2"]
 
+# Async streaming sanitizer over `tokio::io` (text/JSON/CSV pipes). Native-only.
+# Implements bounded-memory rolling-window redaction so PII cannot be split
+# across read-chunk boundaries.
+stream = ["dep:tokio", "dep:bytes"]
+
+# PDF sanitization. Provides text-layer redaction (via `pdf-extract`) AND
+# destructive coordinate-aware blackout / page flattening (via `pdfium-render`,
+# which binds to a runtime-provided libpdfium — clean build, fail-closed if the
+# native library is absent).
+pdf-redact = ["cli-pdf", "dep:pdfium-render"]
+
+# `Bitvanes.toml` user-facing config loader.
+config = ["dep:toml"]
+
 # Tier-2 ML-based PII detection (ONNX NER model). Stub only — the trait
 # and ModelDetector type are always available, but the impl is gated here
 # until the ONNX integration lands. Native-only.
 pii-model = []
 
-# NOTE on `embed-vocab`: BPE vocab is embedded at compile time *unconditionally*
-# by `tiktoken-rs` (which `include_str!`s its assets and contains no network
-# code). Zero-telemetry is therefore always on and not a feature toggle. There
-# is intentionally no `embed-vocab` feature here.
+# NOTE on BPE vocab: tiktoken-rs embeds its vocab files at compile time
+# unconditionally via `include_str!` (no network code), so every build is
+# fully offline. There is intentionally no feature toggle for this.
 
 [lints]
 workspace = true
@@ -63,11 +72,14 @@ workspace = true
 [dependencies]
 arrow = { version = "59.0.0", default-features = false, features = ["ffi"] }
 blake3 = "1"
+bytes = { version = "1", optional = true }
 calamine = { version = "0.36", optional = true, default-features = false }
 memmap2 = { version = "0.9", optional = true }
-ndarray = { version = "0.17", optional = true }
-ort = { version = "2.0.0-rc.12", optional = true }
 pdf-extract = { version = "0.10", optional = true }
+# Runtime-bound pdfium (no compile-time native link → clean build pipeline).
+# `libpdfium` is loaded at runtime via Pdfium::bind_to_system_library(); if it
+# is unavailable, PDF redaction fails closed to text-layer sanitization.
+pdfium-render = { version = "0.9.3", default-features = false, features = ["pdfium_latest", "image_latest", "thread_safe"], optional = true }
 pulldown-cmark = "0.13.4"
 quick-xml = { version = "0.41", optional = true }
 rayon = { version = "1", optional = true }
@@ -76,14 +88,17 @@ rtf-parser = { version = "0.4", optional = true }
 scraper = "0.27.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
 thiserror = "2"
 tiktoken-rs = { version = "0.12.0", default-features = false }
-tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"], optional = true }
+tokio = { version = "1", optional = true, default-features = false, features = ["io-util", "rt", "macros"] }
+toml = { version = "0.8", optional = true }
 zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 proptest = "1"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+pdfium-render = { version = "0.9.3", default-features = false, features = ["pdfium_latest", "image_latest", "thread_safe"] }
 
 [[bench]]
 name = "scrub"

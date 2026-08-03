@@ -1,20 +1,19 @@
 //! Full pipeline orchestration: parse -> scrub -> chunk -> `RecordBatch`.
 //!
 //! This is the entry point called by both the wasm wrapper and the CLI.
-//! It ties the four stages together into a single call that produces an
+//! It ties the stages together into a single call that produces an
 //! Arrow [`RecordBatch`] ready for FFI export or IPC streaming.
 
 use arrow::array::RecordBatch;
 
-use crate::arrow_io::batch::{chunks_to_batch, chunks_to_batch_with_embeddings};
-use crate::chunk::{chunk_document, chunk_document_semantic};
-use crate::embed::Embedder;
+use crate::arrow_io::batch::chunks_to_batch;
+use crate::chunk::chunk_document;
 use crate::error::Result;
 use crate::parse::parse_bytes;
-use crate::schema::{ChunkStrategy, PipelineConfig};
-use crate::scrub::{OffsetMap, PiiFinding, scrub_document};
+use crate::pii::{OffsetMap, PiiFinding, scrub_document};
+use crate::schema::PipelineConfig;
 
-/// Runs the full ETL pipeline on `bytes` and returns an Arrow
+/// Runs the full pipeline on `bytes` and returns an Arrow
 /// [`RecordBatch`] containing the chunked output.
 ///
 /// Stages:
@@ -31,67 +30,6 @@ pub fn run_pipeline(bytes: &[u8], cfg: &PipelineConfig) -> Result<RecordBatch> {
     let doc = parse_bytes(bytes, cfg)?;
     let (scrubbed_doc, offset_map, findings) = scrub_document(doc, &cfg.scrub)?;
     let mut chunks = chunk_document(&scrubbed_doc, &cfg.chunk, cfg.source_label.as_deref())?;
-    attach_metadata(&mut chunks, &findings, &offset_map);
-    let batch = chunks_to_batch(&chunks)?;
-    Ok(batch)
-}
-
-/// Like [`run_pipeline`] but generates embeddings for each chunk and fills
-/// the `embedding` column with real `Float32` vectors.
-///
-/// The embedder is provided by the caller (typically an [`OrtEmbedder`]
-/// loaded from a local model file, or a test stub).
-///
-/// # Errors
-///
-/// Propagates [`crate::error::BitVanesError`] from any pipeline stage or
-/// the embedder.
-///
-/// [`OrtEmbedder`]: crate::embed::OrtEmbedder
-pub fn run_pipeline_with_embeddings(
-    bytes: &[u8],
-    cfg: &PipelineConfig,
-    embedder: &dyn Embedder,
-) -> Result<RecordBatch> {
-    let doc = parse_bytes(bytes, cfg)?;
-    let (scrubbed_doc, offset_map, findings) = scrub_document(doc, &cfg.scrub)?;
-    let mut chunks = chunk_document(&scrubbed_doc, &cfg.chunk, cfg.source_label.as_deref())?;
-    attach_metadata(&mut chunks, &findings, &offset_map);
-
-    let texts: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
-    let embeddings = embedder.embed(&texts)?;
-    let dim = embedder.dim();
-
-    let batch = chunks_to_batch_with_embeddings(&chunks, &embeddings, dim)?;
-    Ok(batch)
-}
-
-/// Like [`run_pipeline`] but honours [`ChunkStrategy::Semantic`]: when the
-/// config asks for semantic chunking, `embedder` guides where cuts happen.
-/// For [`ChunkStrategy::Structural`] the embedder is unused and this is
-/// equivalent to [`run_pipeline`].
-///
-/// # Errors
-///
-/// Propagates [`crate::error::BitVanesError`] from any stage or the embedder.
-pub fn run_pipeline_with_strategy(
-    bytes: &[u8],
-    cfg: &PipelineConfig,
-    embedder: &dyn Embedder,
-) -> Result<RecordBatch> {
-    let doc = parse_bytes(bytes, cfg)?;
-    let (scrubbed_doc, offset_map, findings) = scrub_document(doc, &cfg.scrub)?;
-    let mut chunks = match cfg.chunk.strategy {
-        ChunkStrategy::Structural => {
-            chunk_document(&scrubbed_doc, &cfg.chunk, cfg.source_label.as_deref())?
-        }
-        ChunkStrategy::Semantic { .. } => chunk_document_semantic(
-            &scrubbed_doc,
-            &cfg.chunk,
-            embedder,
-            cfg.source_label.as_deref(),
-        )?,
-    };
     attach_metadata(&mut chunks, &findings, &offset_map);
     let batch = chunks_to_batch(&chunks)?;
     Ok(batch)
@@ -208,12 +146,11 @@ mod tests {
                 ..ChunkConfig::default()
             },
             source_label: Some("test.md".to_string()),
-            embeddings: None,
         };
         let input = b"# Title\n\nHello world. This is a test.";
         let batch = run_pipeline(input, &cfg).unwrap();
         assert!(batch.num_rows() > 0);
-        assert_eq!(batch.num_columns(), 11);
+        assert_eq!(batch.num_columns(), 10);
     }
 
     #[test]
@@ -226,9 +163,8 @@ mod tests {
                 patterns: vec![BuiltInPattern::Email],
                 ..ScrubProfile::default()
             },
-            chunk: ChunkConfig::default(),
             source_label: None,
-            embeddings: None,
+            ..PipelineConfig::default()
         };
         let input = b"Contact alice@example.com for info.";
         let batch = run_pipeline(input, &cfg).unwrap();
@@ -259,9 +195,8 @@ mod tests {
                 patterns: vec![BuiltInPattern::Email],
                 ..ScrubProfile::default()
             },
-            chunk: ChunkConfig::default(),
             source_label: None,
-            embeddings: None,
+            ..PipelineConfig::default()
         };
         let input = b"Contact alice@example.com for info.";
         let batch = run_pipeline(input, &cfg).unwrap();
@@ -284,9 +219,8 @@ mod tests {
                 patterns: vec![BuiltInPattern::Email],
                 ..ScrubProfile::default()
             },
-            chunk: ChunkConfig::default(),
             source_label: None,
-            embeddings: None,
+            ..PipelineConfig::default()
         };
         let input = b"Contact alice@example.com for info.";
         let batch1 = run_pipeline(input, &cfg).unwrap();

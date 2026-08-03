@@ -4,7 +4,7 @@
 //! export, or ingestion into tools that prefer flat tabular data.
 //!
 //! **Limitation:** Arrow's CSV writer does not support nested types
-//! (`List`, `FixedSizeList`). The `heading_path` and `embedding` columns
+//! (`List`, `FixedSizeList`). The `heading_path` and `pii_metadata` columns
 //! are dropped from CSV output. Use IPC format ([`crate::arrow_io::ipc`])
 //! for a complete column-preserving serialization.
 //!
@@ -20,7 +20,7 @@ use crate::error::{BitVanesError, Result};
 
 /// Serializes `batch` into CSV text (header row + data rows).
 ///
-/// Nested columns (`heading_path`, `embedding`) are excluded — see the
+/// Nested columns (`heading_path`, `pii_metadata`) are excluded — see the
 /// module-level limitation note.
 ///
 /// # Errors
