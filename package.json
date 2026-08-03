@@ -1,20 +1,15 @@
 {
   "name": "@bitvanes/web",
   "private": true,
-  "version": "0.4.0",
+  "version": "1.0.0-rc.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "sync-wasm": "cp -r ../core/crates/wasm/pkg/* ./src/wasm/"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
-    "@xenova/transformers": "^2.17.2",
-    "apache-arrow": "^18.0.0",
-    "arrow-js-ffi": "^0.4.0",
-    "pdfjs-dist": "^6.0.227",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

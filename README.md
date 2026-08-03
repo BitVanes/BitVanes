@@ -1,68 +1,48 @@
-# @BitVanes/web
+# @bitvanes/web
 
-The visual ETL studio for BitVanes — a local-first web app that lets you
-drag-and-drop documents, configure semantic chunking profiles, view token
-distribution, and export results or sync them to a vector database. Files are
-processed entirely in your browser; nothing is uploaded to a server.
+The web surface for BitVanes, the zero-trust local PII purification engine. It
+serves two roles from one Vite + React + TypeScript codebase:
+
+1. **Public landing page** (`bitvanes.com`) — marketing site for compliance,
+   legal, and ops teams.
+2. **Local dashboard** — a browser UI that talks **only** to the local BitVanes
+   daemon at `http://127.0.0.1:8080`. No data ever leaves the user's machine.
+
+> The browser no longer runs the engine. The previous in-browser processing
+> architecture was removed in the purification rebrand (multi-gigabyte document
+> streams and OCR are a poor fit for the browser sandbox). All processing is
+> done by the native engine via the local daemon.
 
 ## Architecture
 
 - **Framework:** Vite 6 + TypeScript + React 19.
-- **Engine:** the `@bitvanes/core` WebAssembly binary (compiled from Rust).
-- **Styling:** hand-written CSS with a small design-token system
-  (`src/index.css`) — **not** Tailwind.
-- **Off-main-thread processing:** the wasm engine runs inside a dedicated
-  [`Web Worker`](src/lib/engine.worker.ts) so large documents never block the
-  UI. Arrow data is read via zero-copy FFI (`arrow-js-ffi`) inside the worker,
-  then returned to the main thread as plain JS values.
-- **PDF:** Mozilla PDF.js extracts text client-side (`src/lib/pdf.ts`) before
-  the engine sees it (text-layer only; scanned image PDFs are unsupported).
-- **Embeddings:** on-device via `@xenova/transformers` (all-MiniLM-L6-v2,
-  384-dim), downloaded and cached in the browser.
-- **Vector DB sync:** direct browser `fetch` to a user-supplied database.
-
-## Features
-
-- Drag-and-drop upload (`.pdf`, `.md`, `.txt`, `.html`, `.json`)
-- Format / tokenizer / max-tokens / **overlap** / PII-scrub configuration
-- **Custom regex PII patterns** (regex + replacement, arbitrary count)
-- Chunk preview table with heading ancestry and section kind
-- Token-distribution histogram
-- Export to **JSON**, **CSV**, **Arrow IPC**, or **JSONL with embeddings**
-- **Profile export/import** — a profile JSON that `bitvanes-cli` replays
-  byte-for-byte (`bitvanes -c profile.json -i ./docs/`)
-- On-device embedding generation (all-MiniLM-L6-v2, 384-dim)
-- Sync embeddings + chunks to a vector DB
-
-## Vector database support
-
-| Provider | Browser `fetch` | Notes |
-|----------|-----------------|-------|
-| **Qdrant** | ✅ Works | Sends permissive CORS headers; collection auto-created. |
-| **Pinecone** | ⚠️ CORS-limited | The data plane generally does not allow direct browser `fetch`; route through a proxy/edge function for production. |
-
-API keys are held in memory only and never persisted. (Supabase is not
-currently wired up.)
+- **Styling:** hand-written CSS with a design-token system (`src/index.css`) —
+  not Tailwind.
+- **Processing:** none in-browser. The dashboard POSTs raw text to the local
+  daemon's `/filter` endpoint and renders the redacted result.
 
 ## Getting started
 
 ```bash
 npm install
-npm run sync-wasm   # copy the rebuilt @bitvanes/core wasm pkg into src/wasm/
-npm run dev
+npm run dev      # landing page + dashboard UI
 ```
 
-Build for production:
+To use the dashboard, start the local daemon in another terminal:
 
 ```bash
-npm run build      # tsc -b && vite build
+# from the cli repo
+bitvanes daemon --port 8080 --rules email,ssn,credit_card,phone,street_address
+```
+
+Then open the dashboard view and click **Scrub locally**.
+
+## Build
+
+```bash
+npm run build    # tsc -b && vite build
 npm run preview
 ```
 
-## Notes
-
-- Cross-origin isolation (COOP/COEP) is intentionally **not** enabled in dev,
-  because it would block the cross-origin Xenova model download. Single-threaded
-  wasm + onnxruntime-web run fine without SharedArrayBuffer.
-- The wasm binary lives under `src/wasm/` (gitignored build artifact) and is
-  refreshed from `../core/crates/wasm/pkg` via `npm run sync-wasm`.
+The built bundle is deployed to Vercel for `bitvanes.com` and may also be
+served directly by the daemon (`bitvanes daemon --dashboard-dir ./dist`).
