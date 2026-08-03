@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import DownloadButtons from './DownloadButtons';
 
 const REPO = 'https://github.com/BitVanes/BitVanes';
 const RELEASES = 'https://github.com/BitVanes/BitVanes/releases';
@@ -12,7 +13,7 @@ export default function Landing({ onOpenDashboard }: { onOpenDashboard: () => vo
   return (
     <div className="landing">
       <Nav onOpenDashboard={onOpenDashboard} />
-      <Hero onOpenDashboard={onOpenDashboard} />
+      <Hero />
       <Problems />
       <DemoStrip />
       <HowItWorks />
@@ -48,7 +49,7 @@ function Nav({ onOpenDashboard }: { onOpenDashboard: () => void }) {
   );
 }
 
-function Hero({ onOpenDashboard }: { onOpenDashboard: () => void }) {
+function Hero() {
   return (
     <header className="landing-hero" id="top">
       <span className="eyebrow">Local-first · Nothing leaves your machine</span>
@@ -62,14 +63,7 @@ function Hero({ onOpenDashboard }: { onOpenDashboard: () => void }) {
         any file — in seconds, right on your laptop. Hand it a messy document,
         get back a clean one you can actually share.
       </p>
-      <div className="hero-ctas">
-        <a className="btn-primary" href={RELEASES}>
-          Download — it's free
-        </a>
-        <button className="btn-outline" onClick={onOpenDashboard}>
-          Try the live demo ↓
-        </button>
-      </div>
+      <DownloadButtons />
       <p className="hero-foot">Free forever for text &amp; core PII. No account, no cloud.</p>
     </header>
   );

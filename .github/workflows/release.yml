@@ -1,0 +1,83 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+# softprops/action-gh-release needs write access to create the release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os-label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+            os-label: linux
+            artifact: bitvanes-x86_64-linux.tar.gz
+          - runs-on: macos-latest
+            os-label: macos
+            artifact: bitvanes-aarch64-macos.tar.gz
+          - runs-on: windows-latest
+            os-label: windows
+            artifact: bitvanes-x86_64-windows.zip
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Build the dashboard bundle first — the `dashboard` feature embeds it.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'cli -> cli/target'
+
+      - name: Build bitvanes (release + dashboard)
+        working-directory: cli
+        run: cargo build --release --features dashboard
+
+      - name: Archive (unix)
+        if: matrix.os-label != 'windows'
+        run: tar czf "${{ matrix.artifact }}" -C cli/target/release bitvanes
+
+      - name: Archive (windows)
+        if: matrix.os-label == 'windows'
+        shell: pwsh
+        run: Compress-Archive -Path cli/target/release/bitvanes.exe -DestinationPath ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+      - name: Flatten assets
+        run: find assets -type f \( -name 'bitvanes-*.tar.gz' -o -name 'bitvanes-*.zip' \) -exec mv {} . \;
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            bitvanes-*.tar.gz
+            bitvanes-*.zip

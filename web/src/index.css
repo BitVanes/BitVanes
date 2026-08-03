@@ -158,6 +158,24 @@ a:hover { color: var(--accent-hover); }
 .hero-ctas { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; justify-content: center; }
 .hero-foot { margin-top: 18px; font-size: 13px; color: var(--text-dim); }
 
+/* ── Download buttons ───────────────────── */
+
+.dl-buttons { display: flex; flex-direction: column; align-items: center; gap: 14px; margin: 28px 0 0; }
+.dl-loading { color: var(--text-dim); font-size: 14px; }
+.dl-tag { font-size: 12px; font-weight: 500; opacity: 0.75; margin-left: 6px; }
+.dl-all-row { display: flex; gap: 14px; align-items: center; font-size: 13px; color: var(--text-dim); flex-wrap: wrap; justify-content: center; }
+.dl-all-row a { color: var(--text-muted); }
+.dl-all-row a:hover { color: var(--accent); }
+.dl-cli { max-width: 560px; width: 100%; margin-top: 8px; text-align: left; }
+.dl-cli summary { cursor: pointer; font-size: 13px; color: var(--text-dim); text-align: center; }
+.dl-cli summary:hover { color: var(--text-muted); }
+.dl-cli-blocks { display: flex; flex-direction: column; gap: 12px; margin: 14px 0 10px; }
+.dl-cli-label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin-bottom: 6px; }
+.dl-cli-blocks pre { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px 14px; }
+.dl-cli-blocks pre code { font-size: 12.5px; color: var(--text); background: none; border: none; padding: 0; }
+.dl-unsigned-note { font-size: 12px; color: var(--text-dim); line-height: 1.55; }
+.dl-unsigned-note code { font-size: 11.5px; }
+
 /* ── Section headings ───────────────────── */
 
 section h2 {
@@ -404,6 +422,39 @@ section h2 {
 .dashboard-grid.dragging { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: var(--radius-lg); }
 .cat-list { list-style: none; display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-muted); }
 .cat-list code { color: var(--accent); }
+
+/* ── Daemon setup guide (shown when the local daemon is down) ── */
+.daemon-guide {
+  max-width: 620px;
+  width: 100%;
+  margin: 32px auto;
+  padding: 36px 32px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+.daemon-guide h2 { font-size: 24px; margin-bottom: 14px; }
+.daemon-guide > p { color: var(--text-muted); font-size: 15px; line-height: 1.6; margin-bottom: 24px; }
+.daemon-guide ol { text-align: left; max-width: 440px; margin: 0 auto 26px; display: flex; flex-direction: column; gap: 18px; list-style: none; counter-reset: step; }
+.daemon-guide ol li { counter-increment: step; position: relative; padding-left: 38px; color: var(--text-muted); font-size: 14px; line-height: 1.6; }
+.daemon-guide ol li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: -2px;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+.daemon-guide ol li strong { color: var(--text); }
+.daemon-guide pre {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 12px 14px; margin-top: 8px; text-align: left; overflow-x: auto;
+}
+.daemon-guide pre code { font-size: 12.5px; color: var(--text); background: none; border: none; padding: 0; }
+.daemon-guide-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 22px; }
+.daemon-note { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+.daemon-note code { font-size: 12px; }
 
 @media (max-width: 640px) {
   .landing-nav { padding: 12px 16px; }
