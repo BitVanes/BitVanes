@@ -19,12 +19,16 @@ import { mintLicense, tierForAmount } from '../services/licenseSigner.js';
 import { sendLicenseEmail } from '../services/email.js';
 
 const PAYPAL_BASE = process.env.PAYPAL_API_BASE || 'https://api-m.paypal.com';
+// Tolerant of either PAYPAL_SECRET or PAYPAL_CLIENT_SECRET (and PAYPAL_ID /
+// PAYPAL_CLIENT_ID) so the env var names you set work without renaming.
+const PAYPAL_CLIENT_ID =
+  process.env.PAYPAL_CLIENT_ID || process.env.PAYPAL_ID || '';
+const PAYPAL_SECRET =
+  process.env.PAYPAL_SECRET || process.env.PAYPAL_CLIENT_SECRET || '';
 
 /** Exchange client credentials for a PayPal access token. */
 async function paypalAccessToken() {
-  const auth = Buffer.from(
-    `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`,
-  ).toString('base64');
+  const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_SECRET}`).toString('base64');
   const res = await fetch(`${PAYPAL_BASE}/v1/oauth2/token`, {
     method: 'POST',
     headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
