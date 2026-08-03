@@ -42,6 +42,17 @@ pub(crate) enum Command {
     Daemon(daemon::DaemonArgs),
     /// Interactive terminal UI (file browser + config editor + results).
     Tui(tui::TuiArgs),
+    /// Manage local configuration (install a license key, etc.).
+    Config(ConfigArgs),
+}
+
+/// `bitvanes config --key <BV-…>` — install / verify a license key.
+#[derive(clap::Args, Debug, Clone)]
+pub(crate) struct ConfigArgs {
+    /// A `BV-{TIER}-{jwt}` license key (from bitvanes.com). Verified offline
+    /// against the embedded public key and persisted to `~/.bitvanes/license`.
+    #[arg(long, value_name = "KEY")]
+    pub key: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -51,6 +62,7 @@ fn main() -> ExitCode {
         Some(Command::Filter(args)) => exit(filter::run(args)),
         Some(Command::Daemon(args)) => exit(daemon::run(args)),
         Some(Command::Tui(args)) => exit(tui::run(&args).map_err(Box::from)),
+        Some(Command::Config(args)) => exit(config_run(args)),
         None => {
             // No subcommand: print help and exit success.
             let _ = Cli::command().print_help();
@@ -66,6 +78,22 @@ fn exit(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
         Err(e) => {
             eprintln!("Error: {e}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// `bitvanes config` handler.
+fn config_run(args: ConfigArgs) -> Result<(), Box<dyn std::error::Error>> {
+    match args.key {
+        Some(k) => {
+            let msg = entitlement::install_key(&k).map_err(Box::<dyn std::error::Error>::from)?;
+            println!("{msg}");
+            Ok(())
+        }
+        None => {
+            let checker = entitlement::resolve_checker(None);
+            println!("{}", checker.status().label());
+            Ok(())
         }
     }
 }

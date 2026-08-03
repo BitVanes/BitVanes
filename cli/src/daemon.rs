@@ -25,7 +25,7 @@ use tower_http::services::ServeDir;
 use bitvanes_core::pii::Scrubber;
 use bitvanes_core::sanitizer::{RedactionPolicy, sanitize_text};
 
-use crate::entitlement::{EntitlementChecker, EntitlementStatus, resolve_checker};
+use crate::entitlement::{EntitlementChecker, resolve_checker};
 use crate::shared::{ConfigArg, RulesArg, resolve_config};
 /// `bitvanes daemon --port <P> [--config ...] [--dashboard-dir <DIR>]`.
 #[derive(Args, Debug, Clone)]
@@ -169,15 +169,12 @@ async fn health() -> &'static str {
 /// cached read.
 async fn entitlement(State(state): State<DaemonState>) -> impl IntoResponse {
     let s = state.entitlement.status();
-    let (plan, seats) = match &s {
-        EntitlementStatus::Licensed { plan, seats } => (plan.as_str(), Some(*seats)),
-        _ => ("open-source", None),
-    };
+    let plan = s.plan();
     Json(serde_json::json!({
         "status": s.label(),
-        "plan": plan,
-        "seats": seats,
-        "allow_paid_features": s.allow_paid_features(),
+        "plan": plan.as_str(),
+        "seats": plan.seats(),
+        "allow_paid_features": s.is_pro_or_above(),
     }))
 }
 

@@ -16,6 +16,7 @@ use bitvanes_core::sanitizer::pdfium::PdfRedactMode;
 use bitvanes_core::sanitizer::{RedactionPolicy, SanitizationStats, redact_pdf, sanitize_text};
 use bitvanes_core::schema::{DocumentFormat, PipelineConfig};
 
+use crate::entitlement::{require_pro, resolve_checker};
 use crate::shared::{
     ConfigArg, ResolvedConfig, RulesArg, extensions_for, infer_format, resolve_config,
 };
@@ -56,6 +57,31 @@ pub fn run(args: ScrubArgs) -> Result<(), Box<dyn std::error::Error>> {
     let pdf_mode = PdfRedactMode::parse(&args.pdf_mode)
         .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
 
+    // ---- Freemium gating: Pro features require a license key. -------------
+    let entitlement = resolve_checker(None);
+    let status = entitlement.status();
+    if args.input.is_dir() {
+        require_pro(&status, "batch / directory processing")
+            .map_err(Box::<dyn std::error::Error>::from)?;
+    }
+    if pdf_mode.is_some() {
+        require_pro(
+            &status,
+            "PDF destructive redaction (--pdf-mode redact|flatten)",
+        )
+        .map_err(Box::<dyn std::error::Error>::from)?;
+    }
+    if !resolved.profile.names.is_empty() || resolved.profile.use_generic_names {
+        require_pro(&status, "personal-name gazetteer")
+            .map_err(Box::<dyn std::error::Error>::from)?;
+    }
+    if matches!(policy, RedactionPolicy::Hash { .. }) {
+        require_pro(&status, "hash redaction policy")
+            .map_err(Box::<dyn std::error::Error>::from)?;
+    }
+    // Office formats are gated per-file in the loop below.
+    // -----------------------------------------------------------------------
+
     let files = collect_files(&args.input)?;
     if files.is_empty() {
         return Err(format!("no supported files under {}", args.input.display()).into());
@@ -88,6 +114,14 @@ pub fn run(args: ScrubArgs) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+        if is_office_format(infer_format(path)) {
+            if let Err(e) =
+                require_pro(&status, "office document formats (DOCX/XLSX/PPTX/EPUB/RTF)")
+            {
+                failures.push((path.clone(), e));
+                continue;
+            }
+        }
         match sanitize_bytes(&bytes, path, &cfg, &resolved, &policy, pdf_mode) {
             Ok(Sanitized::Text(text, findings)) => {
                 stats.record_file(bytes.len() as u64, &findings);
@@ -211,6 +245,18 @@ fn write_output(
     }
     fs::write(&dest, data)?;
     Ok(())
+}
+
+/// `true` if the format is a Pro (office) document type.
+fn is_office_format(f: DocumentFormat) -> bool {
+    matches!(
+        f,
+        DocumentFormat::Docx
+            | DocumentFormat::Pptx
+            | DocumentFormat::Xlsx
+            | DocumentFormat::Epub
+            | DocumentFormat::Rtf
+    )
 }
 
 /// Collects supported files under `input` (single file or recursive dir walk).

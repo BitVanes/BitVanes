@@ -27,9 +27,12 @@ dashboard = ["dep:rust-embed"]
 # pinned tag of this monorepo layout (core/cli/web under one parent dir).
 bitvanes-core = { path = "../core/crates/core", features = ["ipc", "csv", "cli-pdf", "parallel", "office", "mmap", "stream", "config", "pdf-redact"] }
 axum = "0.7"
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
 indicatif = "0.17"
+rand = "0.8"
 ratatui = "0.29"
 rayon = "1"
 rust-embed = { version = "8", optional = true }
@@ -39,6 +42,9 @@ tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tower-http = { version = "0.5", features = ["fs"] }
 walkdir = "2"
+
+[dev-dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 
 [profile.release]
 opt-level = 3
