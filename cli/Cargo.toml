@@ -26,7 +26,7 @@ dashboard = ["dep:rust-embed"]
 # in lockstep during development. Published release binaries are built from a
 # pinned tag of this monorepo layout (core/cli/web under one parent dir).
 bitvanes-core = { path = "../core/crates/core", features = ["ipc", "csv", "cli-pdf", "parallel", "office", "mmap", "stream", "config", "pdf-redact"] }
-axum = "0.7"
+axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 indicatif = "0.17"
