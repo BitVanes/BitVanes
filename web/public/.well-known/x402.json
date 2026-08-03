@@ -1,0 +1,40 @@
+{
+  "provider": "BitVanes",
+  "description": "Local-first PII redaction. Purchase a license key to unlock Pro features (PDF destructive redaction, office formats, name detection, batch processing).",
+  "url": "https://bitvanes.com",
+  "payment": {
+    "protocol": "x402",
+    "version": 1,
+    "currency": "USDC",
+    "network": "base",
+    "facilitator": "https://x402.org/facilitator",
+    "accept": "application/json"
+  },
+  "offerings": [
+    {
+      "id": "solo",
+      "name": "BitVanes Solo (annual)",
+      "description": "1 seat. Unlocks PDF redaction, office formats, name detection, batch processing.",
+      "price": "99.00",
+      "currency": "USDC",
+      "period": "year",
+      "endpoint": "https://bitvanes.com/api/v1/license/x402?tier=solo"
+    },
+    {
+      "id": "business",
+      "name": "BitVanes Business (annual)",
+      "description": "5 seats. Everything in Solo plus custom rule builder and audit logging.",
+      "price": "399.00",
+      "currency": "USDC",
+      "period": "year",
+      "endpoint": "https://bitvanes.com/api/v1/license/x402?tier=business"
+    }
+  ],
+  "delivery": {
+    "format": "BV-{TIER}-{jwt}",
+  "algorithm": "Ed25519 (EdDSA)",
+  "verification": "Offline — the public key is embedded in the CLI binary. No call home, no revocation server. Expiry is baked into the signed JWT payload.",
+  "activate": "bitvanes config --key BV-…"
+  },
+  "docs": "https://github.com/BitVanes/BitVanes#readme"
+}

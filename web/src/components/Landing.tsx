@@ -1,40 +1,46 @@
 import { useState } from 'react';
 
+const REPO = 'https://github.com/BitVanes/BitVanes';
+const RELEASES = 'https://github.com/BitVanes/BitVanes/releases';
+
 /**
  * Public landing page for bitvanes.com.
+ * Problem-first, warm, plain language. The product is local-first PII
+ * redaction; the page should make the pain obvious and the relief immediate.
  */
 export default function Landing({ onOpenDashboard }: { onOpenDashboard: () => void }) {
   return (
     <div className="landing">
       <Nav onOpenDashboard={onOpenDashboard} />
       <Hero onOpenDashboard={onOpenDashboard} />
+      <Problems />
       <DemoStrip />
+      <HowItWorks />
       <Features />
-      <GetStarted onOpenDashboard={onOpenDashboard} />
       <Pricing />
+      <ForAgents />
       <ZeroTrustCallout />
       <Footer />
     </div>
   );
 }
 
-const REPO = 'https://github.com/BitVanes/BitVanes';
-const RELEASES = 'https://github.com/BitVanes/BitVanes/releases';
-
 function Nav({ onOpenDashboard }: { onOpenDashboard: () => void }) {
   return (
     <nav className="landing-nav">
-      <div className="logo">
+      <a href="#top" className="logo">
         Bit<span style={{ color: 'var(--accent)' }}>Vanes</span>
-      </div>
+      </a>
       <div className="nav-links">
+        <a href="#how">How it works</a>
+        <a href="#pricing">Pricing</a>
         <a href={REPO} target="_blank" rel="noreferrer">
           GitHub
         </a>
         <a href={RELEASES} target="_blank" rel="noreferrer">
           Download
         </a>
-        <button className="link-btn" onClick={onOpenDashboard}>
+        <button className="btn-primary btn-sm" onClick={onOpenDashboard}>
           Launch Dashboard →
         </button>
       </div>
@@ -44,146 +50,171 @@ function Nav({ onOpenDashboard }: { onOpenDashboard: () => void }) {
 
 function Hero({ onOpenDashboard }: { onOpenDashboard: () => void }) {
   return (
-    <header className="landing-hero">
+    <header className="landing-hero" id="top">
+      <span className="eyebrow">Local-first · Nothing leaves your machine</span>
       <h1>
-        Scrub Sensitive PII in Seconds.
+        Share the document.
         <br />
-        <span className="hl">100% On-Premise. Zero Cloud Leaks.</span>
+        <span className="hl">Not the people in it.</span>
       </h1>
       <p className="subhead">
-        BitVanes directs, filters, and purifies document streams before they reach
-        downstream databases, cloud storage, or AI tools. Save 5+ hours of manual
-        document scrubbing every week — process 1,000 PDFs in seconds, locally on
-        your own hardware.
+        BitVanes finds and removes names, SSNs, card numbers, and secrets from
+        any file — in seconds, right on your laptop. Hand it a messy document,
+        get back a clean one you can actually share.
       </p>
       <div className="hero-ctas">
         <a className="btn-primary" href={RELEASES}>
-          Download BitVanes
+          Download — it's free
         </a>
         <button className="btn-outline" onClick={onOpenDashboard}>
-          Open Local Dashboard
+          Try the live demo ↓
         </button>
       </div>
+      <p className="hero-foot">Free forever for text &amp; core PII. No account, no cloud.</p>
     </header>
   );
 }
 
-/** Animated side-by-side: raw stream vs purified stream. */
+/** Relatable pain — the "why you need this" section. */
+function Problems() {
+  const pains = [
+    {
+      emoji: '📑',
+      title: 'A vendor needs the contract',
+      body: "…but it's full of customer names, account numbers, and signatures. You can't just send it as-is.",
+    },
+    {
+      emoji: '🤖',
+      title: 'Your team wants to use AI',
+      body: '…but pasting patient records, legal files, or customer data into a chatbot is a compliance nightmare.',
+    },
+    {
+      emoji: '🔍',
+      title: 'An auditor wants the logs',
+      body: '…and they’re packed with emails, SSNs, and API keys you are not allowed to hand over in the raw.',
+    },
+  ];
+  return (
+    <section className="problems">
+      <h2>Sound familiar?</h2>
+      <p className="section-sub">Redacting by hand takes hours. Skipping it risks a breach. There's a third option.</p>
+      <div className="pain-grid">
+        {pains.map((p) => (
+          <div key={p.title} className="pain-card">
+            <div className="pain-emoji">{p.emoji}</div>
+            <h3>{p.title}</h3>
+            <p>{p.body}</p>
+          </div>
+        ))}
+      </div>
+      <div className="pain-punchline">
+        <span className="pain-strike">Hours of manual blackout</span> or{' '}
+        <span className="pain-strike">a compliance incident</span>
+        <br />
+        — or <strong>30 seconds with BitVanes</strong>.
+      </div>
+    </section>
+  );
+}
+
 function DemoStrip() {
   const raw =
-    'Contact alice@example.com or 555-123-4567.\nSSN 123-45-6789 on file.\nCard 4123 4567 8901 2345.';
+    'Hi — reaching out about acct 4123-4567-8901-2345.\nSarah Chen, SSN 123-45-6789,\nemail sarah@northside.io, +1 555-123-4567.';
   const clean =
-    'Contact [REDACTED_EMAIL] or [REDACTED_PHONE].\n[REDACTED_SSN] on file.\n[REDACTED_CREDIT_CARD].';
+    'Hi — reaching out about acct [CREDIT_CARD].\n[NAME], SSN [SSN],\nemail [EMAIL], [PHONE].';
   const [purified, setPurified] = useState(false);
   return (
-    <section className="demo-strip">
-      <div className="demo-pane">
-        <h4>Raw stream</h4>
-        <pre>{raw}</pre>
+    <section className="demo-strip-wrap">
+      <div className="demo-strip">
+        <div className="demo-pane">
+          <h4>What you have</h4>
+          <pre>{raw}</pre>
+        </div>
+        <button className="demo-toggle" onClick={() => setPurified((p) => !p)}>
+          {purified ? '⟲ Reset' : 'Purify →'}
+        </button>
+        <div className="demo-pane purified">
+          <h4>What you can share · 0ms to any server</h4>
+          <pre>{purified ? clean : raw}</pre>
+        </div>
       </div>
-      <button className="demo-toggle" onClick={() => setPurified((p) => !p)}>
-        {purified ? '⟲ Reset' : 'Purify →'}
-      </button>
-      <div className="demo-pane purified">
-        <h4>Purified stream · 0ms to any external server</h4>
-        <pre>{purified ? clean : raw}</pre>
+    </section>
+  );
+}
+
+function HowItWorks() {
+  const steps = [
+    { n: 1, title: 'Download', body: 'Grab the free binary for your OS. No signup.' },
+    {
+      n: 2,
+      title: 'Drop in a file',
+      body: 'PDF, Word, Excel, JSON, logs — or paste text. Pick what to redact.',
+    },
+    {
+      n: 3,
+      title: 'Get a clean copy',
+      body: 'PII is gone — actually deleted, not painted over. Share it anywhere.',
+    },
+  ];
+  return (
+    <section className="how-it-works" id="how">
+      <h2>Three steps. About a minute.</h2>
+      <div className="steps-row">
+        {steps.map((s) => (
+          <div key={s.n} className="step-card">
+            <div className="step-num">{s.n}</div>
+            <h3>{s.title}</h3>
+            <p>{s.body}</p>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
 
 function Features() {
+  const features = [
+    {
+      icon: '🎯',
+      title: 'Catches what you would miss',
+      body: 'Emails, SSNs, phones, credit cards (Luhn-checked), routing numbers, addresses, AWS keys, GitHub tokens, JWTs — plus your own custom rules.',
+    },
+    {
+      icon: '✂️',
+      title: 'Actually deletes it',
+      body: "Not a black box drawn over the text — the PII bytes are removed. For PDFs, the text objects are gone and the page can be flattened to an image.",
+    },
+    {
+      icon: '📄',
+      title: 'Every format you have',
+      body: 'PDF, DOCX, XLSX, PPTX, EPUB, RTF, Markdown, HTML, JSON, plain text, and live streams.',
+    },
+    {
+      icon: '🚫',
+      title: 'Zero cloud. Literally zero.',
+      body: 'It runs on your machine. No uploads, no telemetry, no accounts. The daemon binds to localhost only — it cannot be reached from the network.',
+    },
+  ];
   return (
     <section className="features">
-      <Feature
-        icon="🔒"
-        title="Air-Gapped Local Redaction"
-        body="Everything runs on your hardware. No cloud uploads, no telemetry, no compliance risk. The engine makes zero network calls."
-      />
-      <Feature
-        icon="⚡"
-        title="Deterministic Stream Filtering"
-        body="Regex + Luhn/ABA-validated detection with confidence scoring. Pipe a stream through bitvanes filter or scrub a directory of 1,000 documents in seconds."
-      />
-      <Feature
-        icon="🛡️"
-        title="Zero-Trust Data Cleansing"
-        body="Mask, hash, or redact PII (email, SSN, phone, credit card, routing, addresses, API keys, JWTs). Configurable rules via Bitvanes.toml."
-      />
-      <Feature
-        icon="📄"
-        title="Local Document Sanitization"
-        body="PDF, DOCX, PPTX, XLSX, EPUB, RTF, Markdown, HTML, JSON, and plain text — parsed and sanitized before they reach downstream systems."
-      />
-    </section>
-  );
-}
-
-function Feature({ icon, title, body }: { icon: string; title: string; body: string }) {
-  return (
-    <div className="feature-card">
-      <div className="feature-icon">{icon}</div>
-      <h3>{title}</h3>
-      <p>{body}</p>
-    </div>
-  );
-}
-
-function GetStarted({ onOpenDashboard }: { onOpenDashboard: () => void }) {
-  return (
-    <section className="get-started" id="get-started">
-      <h2>Run it in 60 seconds</h2>
-      <p className="pricing-sub">
-        BitVanes is local-first — no account, no cloud. Download the binary and
-        start the daemon.
-      </p>
-      <div className="steps">
-        <div className="step">
-          <div className="step-num">1</div>
-          <h4>Download</h4>
-          <p>
-            Grab the <code>bitvanes</code> binary for your OS from{' '}
-            <a href={RELEASES} target="_blank" rel="noreferrer">
-              GitHub Releases
-            </a>{' '}
-            (or{' '}
-            <a href={REPO} target="_blank" rel="noreferrer">
-              build from source
-            </a>
-            ).
-          </p>
+      {features.map((f) => (
+        <div key={f.title} className="feature-card">
+          <div className="feature-icon">{f.icon}</div>
+          <h3>{f.title}</h3>
+          <p>{f.body}</p>
         </div>
-        <div className="step">
-          <div className="step-num">2</div>
-          <h4>Start the daemon</h4>
-          <pre>
-            <code>bitvanes daemon --rules email,ssn,credit_card,phone,street_address</code>
-          </pre>
-        </div>
-        <div className="step">
-          <div className="step-num">3</div>
-          <h4>Scrub</h4>
-          <p>
-            Open the local dashboard and drop in a file, or pipe a stream:{' '}
-            <code>cat f.json | bitvanes filter</code>.
-          </p>
-          <button className="btn-outline" onClick={onOpenDashboard}>
-            Open Local Dashboard →
-          </button>
-        </div>
-      </div>
+      ))}
     </section>
   );
 }
 
 function Pricing() {
   return (
-    <section className="pricing">
-      <h2>Pricing</h2>
+    <section className="pricing" id="pricing">
+      <h2>Free to start. Pay only if you need the heavy lifting.</h2>
       <p className="pricing-sub">
-        Free for core text scrubbing. One-time or annual keys unlock document +
-        automation features. No cloud, no telemetry — your license key unlocks
-        local features offline.
+        The free tier covers everyday text redaction. A one-time key unlocks
+        documents and automation — verified offline, nothing phones home.
       </p>
       <div className="tiers">
         <div className="tier">
@@ -191,29 +222,30 @@ function Pricing() {
           <div className="price">
             $0<span className="price-sub">/forever</span>
           </div>
-          <p className="tier-tag">No key needed — just run it.</p>
+          <p className="tier-tag">No key, no account — just run it.</p>
           <ul>
-            <li>Text &amp; stream scrubbing (<code>scrub</code> / <code>filter</code>)</li>
-            <li>Core PII: email, SSN, phone, card, routing, address, secrets</li>
-            <li>Local daemon + this dashboard</li>
-            <li>Mask / placeholder redaction</li>
+            <li>✅ Text &amp; stream redaction</li>
+            <li>✅ Core PII (email, SSN, phone, card, address, secrets)</li>
+            <li>✅ Local dashboard</li>
+            <li>✅ Mask / placeholder output</li>
           </ul>
         </div>
         <div className="tier tier-cli">
+          <div className="tier-badge">Most popular</div>
           <h3>Solo</h3>
           <div className="price">
             $12<span className="price-sub">/mo · $99/yr</span>
           </div>
-          <p className="tier-tag">1 seat · unlocks Pro features.</p>
+          <p className="tier-tag">For one person handling real documents.</p>
           <ul>
-            <li>PDF destructive redaction (<code>--pdf-mode redact</code>)</li>
-            <li>Office formats (DOCX, XLSX, PPTX, EPUB, RTF)</li>
-            <li>Personal-name gazetteer</li>
-            <li>Batch / directory processing</li>
-            <li>Hash redaction policy</li>
+            <li>Everything in Free, plus:</li>
+            <li>⚡ PDF redaction (delete + flatten)</li>
+            <li>⚡ Word, Excel, PowerPoint, EPUB</li>
+            <li>⚡ Name detection (your custom list)</li>
+            <li>⚡ Batch a whole folder at once</li>
           </ul>
-          <a className="btn-primary" href="#get-started">
-            Buy a key
+          <a className="btn-primary btn-block" href="#get-started">
+            Get a Solo key
           </a>
         </div>
         <div className="tier">
@@ -221,19 +253,71 @@ function Pricing() {
           <div className="price">
             $49<span className="price-sub">/mo · $399/yr</span>
           </div>
-          <p className="tier-tag">5 seats · for teams.</p>
+          <p className="tier-tag">For teams that process a lot.</p>
           <ul>
-            <li>Everything in Solo</li>
-            <li>5 license seats</li>
-            <li>Custom regex rule builder</li>
-            <li>Local audit logging</li>
-            <li>Priority support</li>
+            <li>Everything in Solo, plus:</li>
+            <li>👥 5 seats</li>
+            <li>🔧 Custom regex rule builder</li>
+            <li>📋 Local audit logging</li>
+            <li>🛟 Priority support</li>
           </ul>
-          <a className="btn-outline" href="#get-started">
-            Buy a key
+          <a className="btn-outline btn-block" href="#get-started">
+            Get a Business key
           </a>
         </div>
       </div>
+      <div className="get-started-box" id="get-started">
+        <h3>Buy a key</h3>
+        <p>
+          Card payments arrive via PayPal. AI agents can pay directly with USDC
+          over the x402 protocol — see <a href="#agents">For agents</a>.
+        </p>
+        <div className="get-started-cta">
+          <a className="btn-primary" href={RELEASES}>
+            Download BitVanes first
+          </a>
+          <code>bitvanes config --key BV-…</code> to activate
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** The agentic surface — discoverable, well-packaged, pay-per-use. */
+function ForAgents() {
+  return (
+    <section className="for-agents" id="agents">
+      <h2>For AI agents</h2>
+      <p className="section-sub">
+        Agents can purchase licenses programmatically with USDC over the x402
+        protocol — no human in the loop, no account to create.
+      </p>
+      <div className="agent-grid">
+        <div className="agent-card">
+          <h3>1 · Discover</h3>
+          <p>Fetch the machine-readable manifest:</p>
+          <pre>
+            <code>GET /.well-known/x402.json</code>
+          </pre>
+        </div>
+        <div className="agent-card">
+          <h3>2 · Pay (x402)</h3>
+          <p>POST without payment → get a 402. Retry with the payment header:</p>
+          <pre>
+            <code>POST /api/v1/license/x402?tier=solo</code>
+          </pre>
+        </div>
+        <div className="agent-card">
+          <h3>3 · Receive</h3>
+          <p>A signed <code>BV-SOLO-…</code> key lands in the 200 JSON body. Hand it to the CLI:</p>
+          <pre>
+            <code>bitvanes config --key BV-SOLO-…</code>
+          </pre>
+        </div>
+      </div>
+      <p className="agent-foot">
+        Solo <strong>$99/yr</strong> · Business <strong>$399/yr</strong> · USDC on Base. Keys are Ed25519-signed JWTs, verified fully offline — your agent never has to trust a server, just the embedded public key.
+      </p>
     </section>
   );
 }
@@ -241,11 +325,11 @@ function Pricing() {
 function ZeroTrustCallout() {
   return (
     <section className="zero-trust">
-      <h3>Zero-Trust Guarantee</h3>
+      <h3>Your data never touches our servers. Really.</h3>
       <p>
-        Your data never touches our servers. BitVanes operates completely air-gapped
-        on your local hardware — the engine contains no network code, and the daemon
-        binds to loopback (127.0.0.1) only.
+        BitVanes is air-gapped by design. The engine contains no network code.
+        The dashboard is a local UI for a daemon that binds to 127.0.0.1 only.
+        We literally cannot see your files — and neither can anyone else.
       </p>
     </section>
   );
@@ -254,15 +338,16 @@ function ZeroTrustCallout() {
 function Footer() {
   return (
     <footer className="landing-footer">
-      <div className="logo">
+      <a href="#top" className="logo">
         Bit<span style={{ color: 'var(--accent)' }}>Vanes</span>
-      </div>
+      </a>
       <div className="footer-links">
         <a href={REPO}>GitHub</a>
         <a href={RELEASES}>Releases</a>
         <a href={`${REPO}#readme`}>Docs</a>
+        <a href="#agents">For Agents</a>
       </div>
-      <span>· MIT OR Apache-2.0</span>
+      <span>© BitVanes · MIT OR Apache-2.0</span>
     </footer>
   );
 }

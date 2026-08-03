@@ -33,10 +33,10 @@ revocation server — expiry is baked into the signed JWT payload.
    - Embed the printed **public key** in `cli/src/entitlement.rs` (`DEV_PUBKEY`).
    - Set the printed **private key** as `BITVANES_LICENSE_PRIVATE_KEY` in Vercel.
 
-   The current dev keypair (deterministic, `cargo run --example keygen`
-   reproduces it):
-   - public (embedded): `28 20 95 49 88 24 a3 f8 …` (see `DEV_PUBKEY`)
-   - private (backend env): `7f5cdbd694ac9eaad79fac1ba9c413c3c92f6f9b851c1083eddd3a39c2a9c318`
+   The current dev keypair is deterministic — `cargo run --example keygen`
+   prints the public key (to embed) **and** the private key (set as the Vercel
+   env var). The private key must NEVER be committed; this README does not
+   reproduce it. Run the command to obtain it for local testing.
 
    **For production**: change the seed in `examples/keygen.rs` (or use `OsRng`),
    re-embed the new public key, rebuild the CLI, and set the new private key in
