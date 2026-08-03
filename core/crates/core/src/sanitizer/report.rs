@@ -53,8 +53,10 @@ impl SanitizationStats {
         self.files_processed += 1;
         self.bytes_sanitized += byte_len;
         if matches_scrubbed > 0 {
-            *self.pii_by_type.entry("pdf_redacted".to_string()).or_insert(0) +=
-                matches_scrubbed as u64;
+            *self
+                .pii_by_type
+                .entry("pdf_redacted".to_string())
+                .or_insert(0) += matches_scrubbed as u64;
         }
     }
 

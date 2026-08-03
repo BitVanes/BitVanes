@@ -1,6 +1,6 @@
 [package]
 name = "bitvanes-cli"
-version = "1.0.0-rc.1"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -22,8 +22,9 @@ default = []
 dashboard = ["dep:rust-embed"]
 
 [dependencies]
-# TODO(phase-9): restore the git-tag dependency once core is re-tagged after the
-# purification rebrand. Local path during the refactor so core/cli move together.
+# The CLI links `bitvanes-core` via a path dependency so the three repos move
+# in lockstep during development. Published release binaries are built from a
+# pinned tag of this monorepo layout (core/cli/web under one parent dir).
 bitvanes-core = { path = "../core/crates/core", features = ["ipc", "csv", "cli-pdf", "parallel", "office", "mmap", "stream", "config", "pdf-redact"] }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }

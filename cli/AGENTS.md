@@ -47,9 +47,9 @@ streams, `config::BitvanesConfig` parses `Bitvanes.toml`.
 bitvanes-core = { path = "../core/crates/core", features = ["ipc","csv","cli-pdf","parallel","office","mmap","stream","config","pdf-redact"] }
 ```
 
-> TODO(phase-9): restore the git-tag dependency once core is re-tagged after the
-> purification rebrand. The CLI is distributed as a prebuilt binary via GitHub
-> Releases and links core via a git tag in published releases.
+The CLI links core via a path dependency so the three repos move in lockstep.
+Release binaries are built from this monorepo layout (core/cli/web under one
+parent directory).
 
 ## Toolchain
 

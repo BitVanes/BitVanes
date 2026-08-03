@@ -8,11 +8,13 @@
 //!    and user-supplied) into individual [`Regex`](regex::Regex) instances,
 //!    each tagged with its base confidence and contextual anchor keywords.
 //! 2. [`Scrubber::scrub`] finds all matches via `find_iter`, pipes
-//!    credit-card candidates through Luhn mod-10 verification and routing
-//!    numbers through the ABA checksum (dropping failures), scans a ±N-word
-//!    window around each surviving candidate for keyword anchors, computes a
-//!    weighted-additive confidence score, resolves overlaps via greedy
-//!    interval scheduling, and builds the scrubbed text.
+//!    credit-card candidates through Luhn mod-10 as a **confidence modifier**
+//!    (a fail lowers confidence but never drops the candidate — fail-safe),
+//!    routes numbers through the ABA checksum (a hard gate that drops
+//!    failures), scans a ±N-word window around each surviving candidate for
+//!    keyword anchors, computes a weighted-additive confidence score,
+//!    resolves overlaps via greedy interval scheduling, and builds the
+//!    scrubbed text.
 //! 3. [`OffsetMap`] records every replacement's position so that chunk
 //!    offsets (into the scrubbed text) can be projected back onto the
 //!    original document for UI highlighting.
@@ -25,32 +27,38 @@
 //!
 //! `score = (base + anchors_hit × ANCHOR_DELTA).min(ANCHOR_CAP)`
 //!
-//! | Pattern         | Base  | Validator          | Validator floor |
-//! |-----------------|-------|--------------------|-----------------|
-//! | Email           | 0.85  | none               | —               |
-//! | Ssn             | 0.60  | none               | —               |
-//! | Phone           | 0.65  | none               | —               |
-//! | `CreditCard`    | 0.70  | Luhn (gate)        | 0.90 on pass    |
-//! | `RoutingNumber` | 0.55  | ABA checksum (gate)| —               |
-//! | `AwsKey`        | 0.95  | none               | —               |
-//! | `GitHubPat`     | 0.95  | none               | —               |
-//! | `Jwt`           | 0.90  | none               | —               |
+//! | Pattern         | Base  | Validator           | Validator effect                 |
+//! |-----------------|-------|---------------------|----------------------------------|
+//! | Email           | 0.85  | none                | —                                |
+//! | Ssn             | 0.60  | none                | —                                |
+//! | Phone           | 0.65  | none                | —                                |
+//! | `CreditCard`    | 0.70  | Luhn (soft)         | 0.90 floor on pass / 0.55 on fail |
+//! | `RoutingNumber` | 0.55  | ABA checksum (gate) | dropped on fail                  |
+//! | `AwsKey`        | 0.95  | none                | —                                |
+//! | `GitHubPat`     | 0.95  | none                | —                                |
+//! | `Jwt`           | 0.90  | none                | —                                |
+//!
+//! Credit-card Luhn is a **soft** validator: a card-shaped number that fails
+//! the checksum is still flagged and redacted (at lower confidence) rather
+//! than dropped, because a transcription/OCR error on a real card must not
+//! leak the card. Raise `min_confidence` to restore precision (e.g. `0.85`
+//! redacts only Luhn-valid or strongly-anchored cards).
 //!
 //! Candidates whose confidence falls below `ScrubProfile::min_confidence`
 //! are dropped entirely (neither scrubbed nor reported).
 //!
 //! # Built-in patterns
 //!
-//! | Pattern       | Replacement       | Post-filter |
-//! |---------------|-------------------|-------------|
-//! | Email         | `[EMAIL]`         | none        |
-//! | Ssn           | `[SSN]`           | none        |
-//! | Phone         | `[PHONE]`         | none        |
-//! | CreditCard    | `[CREDIT_CARD]`   | Luhn        |
-//! | RoutingNumber | `[ROUTING_NUMBER]`| ABA         |
-//! | AwsKey        | `[AWS_KEY]`       | none        |
-//! | GitHubPat     | `[GITHUB_PAT]`    | none        |
-//! | Jwt           | `[JWT]`           | none        |
+//! | Pattern       | Replacement       | Post-filter        |
+//! |---------------|-------------------|--------------------|
+//! | Email         | `[EMAIL]`         | none               |
+//! | Ssn           | `[SSN]`           | none               |
+//! | Phone         | `[PHONE]`         | none               |
+//! | CreditCard    | `[CREDIT_CARD]`   | Luhn (soft)        |
+//! | RoutingNumber | `[ROUTING_NUMBER]`| ABA (hard gate)    |
+//! | AwsKey        | `[AWS_KEY]`       | none               |
+//! | GitHubPat     | `[GITHUB_PAT]`    | none               |
+//! | Jwt           | `[JWT]`           | none               |
 
 use regex::Regex;
 
@@ -71,6 +79,12 @@ const ANCHOR_CAP: f32 = 0.99;
 /// Floor for Luhn-validated credit cards: a card that passes mod-10 is at
 /// least this confident regardless of anchor context.
 const LUHN_FLOOR: f32 = 0.90;
+
+/// Confidence for a card-shaped number that FAILS the Luhn checksum. The
+/// candidate is still flagged and redacted (fail-safe — a corrupted real card
+/// must not leak), but at a lower confidence so a high `min_confidence` can
+/// restore precision.
+const LUHN_FAIL_CONFIDENCE: f32 = 0.55;
 
 // ===========================================================================
 // Offset map
@@ -266,6 +280,477 @@ const ANCHOR_STREET: &[&str] = &[
 const ANCHOR_AWS: &[&str] = &["aws", "access", "key", "iam", "credential", "secret"];
 const ANCHOR_GITHUB: &[&str] = &["github", "token", "pat", "gh", "gist"];
 const ANCHOR_JWT: &[&str] = &["jwt", "bearer", "token", "authorization", "auth"];
+const ANCHOR_NAME: &[&str] = &[
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "prof",
+    "rev",
+    "name",
+    "named",
+    "patient",
+    "contact",
+    "officer",
+    "manager",
+    "director",
+    "president",
+    "chairman",
+    "employee",
+    "customer",
+    "client",
+    "user",
+    "resident",
+    "owner",
+    "applicant",
+    "defendant",
+    "plaintiff",
+    "witness",
+    "suspect",
+    "victim",
+    "born",
+    "dob",
+    "hereby",
+    "signature",
+    "signed",
+];
+
+/// Replacement token for personal-name matches emitted by the Tier-2
+/// gazetteer.
+const NAME_REPLACEMENT: &str = "[NAME]";
+
+/// Base confidence for a single-token name match (e.g. `"Akhmad"`).
+const NAME_BASE_SINGLE: f32 = 0.55;
+/// Base confidence for a multi-token name match (e.g. `"Jane Doe"`).
+const NAME_BASE_MULTI: f32 = 0.78;
+
+/// A small, curated starter list of common English given names that are
+/// rarely ordinary words. Opt-in via `ScrubProfile::use_generic_names` — it
+/// is intentionally conservative and NOT a substitute for a customer-supplied
+/// name list tuned to the corpus.
+const GENERIC_GIVEN_NAMES: &[&str] = &[
+    "Aaron",
+    "Abigail",
+    "Adam",
+    "Adrian",
+    "Ahmed",
+    "Akhmad",
+    "Albert",
+    "Alex",
+    "Alexander",
+    "Alfred",
+    "Alice",
+    "Allison",
+    "Amanda",
+    "Amber",
+    "Amelia",
+    "Amy",
+    "Andrea",
+    "Andrew",
+    "Angela",
+    "Anna",
+    "Anne",
+    "Anthony",
+    "Arthur",
+    "Ashley",
+    "Audrey",
+    "Austin",
+    "Ava",
+    "Avery",
+    "Barbara",
+    "Benjamin",
+    "Bethany",
+    "Betty",
+    "Beverly",
+    "Billy",
+    "Bobby",
+    "Bonnie",
+    "Brandon",
+    "Brenda",
+    "Brian",
+    "Bruce",
+    "Carl",
+    "Caroline",
+    "Carolyn",
+    "Catherine",
+    "Charles",
+    "Charlotte",
+    "Chelsea",
+    "Cheyenne",
+    "Chloe",
+    "Christina",
+    "Christine",
+    "Christopher",
+    "Cindy",
+    "Clarence",
+    "Connie",
+    "Craig",
+    "Crystal",
+    "Cynthia",
+    "Dale",
+    "Daniel",
+    "Danielle",
+    "Darrell",
+    "David",
+    "Dawn",
+    "Denise",
+    "Dennis",
+    "Derek",
+    "Diane",
+    "Donald",
+    "Donna",
+    "Doris",
+    "Dorothy",
+    "Douglas",
+    "Dustin",
+    "Dwight",
+    "Dylan",
+    "Earl",
+    "Edgar",
+    "Edward",
+    "Edwin",
+    "Eleanor",
+    "Elena",
+    "Elisabeth",
+    "Elizabeth",
+    "Ella",
+    "Ellen",
+    "Emily",
+    "Emma",
+    "Eric",
+    "Erica",
+    "Erin",
+    "Esther",
+    "Ethan",
+    "Eugene",
+    "Eva",
+    "Evan",
+    "Evelyn",
+    "Faith",
+    "Felicia",
+    "Felix",
+    "Florence",
+    "Frances",
+    "Francis",
+    "Frank",
+    "Fred",
+    "Gabriel",
+    "Garry",
+    "Gary",
+    "George",
+    "Gerald",
+    "Gloria",
+    "Gordon",
+    "Grace",
+    "Gregory",
+    "Hannah",
+    "Harold",
+    "Harriet",
+    "Harrison",
+    "Harry",
+    "Harvey",
+    "Hassan",
+    "Hazel",
+    "Heather",
+    "Heidi",
+    "Helen",
+    "Henry",
+    "Herbert",
+    "Holly",
+    "Howard",
+    "Hudson",
+    "Hugh",
+    "Ian",
+    "Ida",
+    "Imani",
+    "Irene",
+    "Iris",
+    "Irma",
+    "Isaac",
+    "Isabella",
+    "Isabel",
+    "Ivan",
+    "Jack",
+    "Jackson",
+    "Jacob",
+    "Jade",
+    "Jake",
+    "James",
+    "Jamie",
+    "Jared",
+    "Jason",
+    "Jasper",
+    "Jay",
+    "Jean",
+    "Jeffrey",
+    "Jenna",
+    "Jennifer",
+    "Jeremy",
+    "Jerome",
+    "Jerry",
+    "Jesse",
+    "Jessica",
+    "Jill",
+    "Jim",
+    "Joan",
+    "Joann",
+    "Joanne",
+    "Jocelyn",
+    "Jodi",
+    "Joe",
+    "Joel",
+    "John",
+    "Johnny",
+    "Jon",
+    "Jonathan",
+    "Jordan",
+    "Joseph",
+    "Joshua",
+    "Joyce",
+    "Juan",
+    "Judith",
+    "Judy",
+    "Julia",
+    "Julie",
+    "June",
+    "Justin",
+    "Kaitlyn",
+    "Karen",
+    "Karl",
+    "Kate",
+    "Katherine",
+    "Kathleen",
+    "Kathryn",
+    "Katie",
+    "Kayla",
+    "Keith",
+    "Kelly",
+    "Kelsey",
+    "Ken",
+    "Kenneth",
+    "Kent",
+    "Kerry",
+    "Kevin",
+    "Kim",
+    "Kimberly",
+    "Kristen",
+    "Kristin",
+    "Kyle",
+    "Lance",
+    "Larry",
+    "Laura",
+    "Lauren",
+    "Laurie",
+    "Lawrence",
+    "Leah",
+    "Lee",
+    "Leland",
+    "Leo",
+    "Leon",
+    "Leonard",
+    "Leslie",
+    "Lester",
+    "Levi",
+    "Lewis",
+    "Liam",
+    "Lillian",
+    "Linda",
+    "Lisa",
+    "Lloyd",
+    "Logan",
+    "Lois",
+    "Lori",
+    "Lorraine",
+    "Louis",
+    "Louise",
+    "Lucas",
+    "Lucy",
+    "Luke",
+    "Lyle",
+    "Lynn",
+    "Mabel",
+    "Madison",
+    "Maggie",
+    "Malik",
+    "Marilyn",
+    "Mark",
+    "Marlene",
+    "Marsha",
+    "Marshall",
+    "Martha",
+    "Martin",
+    "Marvin",
+    "Mary",
+    "Mason",
+    "Matthew",
+    "Maureen",
+    "Max",
+    "Megan",
+    "Melanie",
+    "Melissa",
+    "Melody",
+    "Michael",
+    "Michele",
+    "Michelle",
+    "Miguel",
+    "Mildred",
+    "Miles",
+    "Millie",
+    "Molly",
+    "Monica",
+    "Morgan",
+    "Morris",
+    "Murray",
+    "Nancy",
+    "Naomi",
+    "Natalie",
+    "Nathan",
+    "Nathaniel",
+    "Nelson",
+    "Nicholas",
+    "Nicole",
+    "Noah",
+    "Nora",
+    "Norman",
+    "Olive",
+    "Oliver",
+    "Olivia",
+    "Omar",
+    "Oscar",
+    "Otto",
+    "Owen",
+    "Pamela",
+    "Patricia",
+    "Patrick",
+    "Patsy",
+    "Paul",
+    "Paula",
+    "Pauline",
+    "Pedro",
+    "Peggy",
+    "Penny",
+    "Perry",
+    "Peter",
+    "Philip",
+    "Phoebe",
+    "Phyllis",
+    "Rachel",
+    "Ralph",
+    "Ramon",
+    "Randall",
+    "Randy",
+    "Raymond",
+    "Rebecca",
+    "Reginald",
+    "Renee",
+    "Rex",
+    "Rhonda",
+    "Richard",
+    "Rick",
+    "Rita",
+    "Robert",
+    "Roberta",
+    "Robin",
+    "Rodney",
+    "Roger",
+    "Ronald",
+    "Rosa",
+    "Rose",
+    "Rosemary",
+    "Ross",
+    "Roy",
+    "Russell",
+    "Ruth",
+    "Ryan",
+    "Sabrina",
+    "Sally",
+    "Samuel",
+    "Sandra",
+    "Sarah",
+    "Scott",
+    "Sean",
+    "Selena",
+    "Seth",
+    "Shane",
+    "Shannon",
+    "Sharon",
+    "Sheila",
+    "Shelby",
+    "Sherry",
+    "Shirley",
+    "Simon",
+    "Sofia",
+    "Sonja",
+    "Sonia",
+    "Sophia",
+    "Sophie",
+    "Spencer",
+    "Stacy",
+    "Stella",
+    "Stephanie",
+    "Stephen",
+    "Steve",
+    "Steven",
+    "Stuart",
+    "Sue",
+    "Susan",
+    "Susie",
+    "Sylvia",
+    "Tamara",
+    "Tammy",
+    "Tanya",
+    "Tara",
+    "Tatiana",
+    "Teresa",
+    "Terri",
+    "Terry",
+    "Theodore",
+    "Theresa",
+    "Thomas",
+    "Tiffany",
+    "Timothy",
+    "Tina",
+    "Todd",
+    "Tom",
+    "Tommy",
+    "Tony",
+    "Tracy",
+    "Travis",
+    "Trent",
+    "Trevor",
+    "Troy",
+    "Tyler",
+    "Valerie",
+    "Vanessa",
+    "Vera",
+    "Vernon",
+    "Veronica",
+    "Vicki",
+    "Victoria",
+    "Vincent",
+    "Viola",
+    "Violet",
+    "Virginia",
+    "Vivian",
+    "Wade",
+    "Wallace",
+    "Walter",
+    "Wanda",
+    "Warren",
+    "Wayne",
+    "Wendy",
+    "Wesley",
+    "William",
+    "Willie",
+    "Wilma",
+    "Winston",
+    "Yolanda",
+    "Yusuf",
+    "Yvette",
+    "Zachary",
+    "Zoe",
+];
 
 // ===========================================================================
 // Scrubber
@@ -282,6 +767,9 @@ pub struct Scrubber {
     min_confidence: f32,
     /// Entity slugs to detect-and-report but NOT replace.
     report_only: std::collections::HashSet<String>,
+    /// Optional Tier-2 personal-name gazetteer (user names + optionally the
+    /// bundled generic list). `None` when no names are configured.
+    name_gazetteer: Option<NameGazetteer>,
 }
 
 #[derive(Debug, Clone)]
@@ -297,20 +785,73 @@ struct CompiledPattern {
     anchors: &'static [&'static str],
 }
 
+/// A compiled Tier-2 personal-name gazetteer: a single case-insensitive
+/// alternation regex built from escaped, deduplicated name phrases. Matches
+/// are anchored on word boundaries so `"Al"` does not fire inside `"Alpha"`.
+#[derive(Debug, Clone)]
+struct NameGazetteer {
+    regex: Regex,
+}
+
+/// Builds a [`NameGazetteer`] from the user-supplied `names` plus, optionally,
+/// the bundled [`GENERIC_GIVEN_NAMES`]. Returns `Ok(None)` when no names are
+/// configured (so `scrub` skips the Tier-2 pass entirely).
+///
+/// # Errors
+///
+/// Returns [`BitVanesError::InvalidConfig`] if the combined alternation regex
+/// fails to compile (extremely unlikely — every phrase is `regex::escape`d).
+fn build_name_gazetteer(names: &[String], use_generic: bool) -> Result<Option<NameGazetteer>> {
+    let mut phrases: Vec<String> = Vec::new();
+    if use_generic {
+        phrases.extend(
+            GENERIC_GIVEN_NAMES
+                .iter()
+                .map(std::string::ToString::to_string),
+        );
+    }
+    phrases.extend(names.iter().cloned());
+    if phrases.is_empty() {
+        return Ok(None);
+    }
+
+    // Normalize: trim, lowercase, escape regex metacharacters, drop empties.
+    let mut escaped: Vec<String> = phrases
+        .iter()
+        .map(|p| regex::escape(p.trim()))
+        .filter(|p| !p.is_empty())
+        .collect();
+    escaped.sort();
+    escaped.dedup();
+    if escaped.is_empty() {
+        return Ok(None);
+    }
+
+    let src = format!(r"(?i)\b(?:{})\b", escaped.join("|"));
+    let regex = Regex::new(&src)
+        .map_err(|e| BitVanesError::InvalidConfig(format!("name gazetteer regex: {e}")))?;
+    Ok(Some(NameGazetteer { regex }))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Validator {
     None,
-    /// Extract digits from the match, validate via Luhn checksum. A failing
-    /// checksum drops the candidate entirely (not a credit card).
+    /// Luhn mod-10 — **soft**: a fail lowers confidence to `LUHN_FAIL_CONFIDENCE`
+    /// but never drops the candidate. A card-shaped number that fails the
+    /// checksum is still flagged/redacted (fail-safe: a transcription or OCR
+    /// error on a real card must not leak it).
     Luhn,
-    /// Validate via the ABA routing-number checksum. A failing checksum drops
-    /// the candidate.
+    /// ABA routing checksum — **hard gate**: a fail drops the candidate
+    /// entirely (9-digit numbers are extremely common; the gate is needed for
+    /// precision).
     RoutingNumber,
 }
 
 impl Validator {
+    /// `true` for hard gates that drop a failing candidate before confidence
+    /// scoring. Luhn is intentionally NOT gated.
     const fn is_gated(self) -> bool {
-        matches!(self, Self::Luhn | Self::RoutingNumber)
+        matches!(self, Self::RoutingNumber)
     }
 
     fn is_valid(self, text: &str, start: usize, end: usize) -> bool {
@@ -367,6 +908,7 @@ impl Scrubber {
             anchor_window: profile.anchor_window,
             min_confidence: profile.min_confidence,
             report_only: profile.report_only.iter().cloned().collect(),
+            name_gazetteer: build_name_gazetteer(&profile.names, profile.use_generic_names)?,
         })
     }
 
@@ -384,11 +926,17 @@ impl Scrubber {
     /// offsets into the **original** text.
     #[must_use]
     pub fn scrub(&self, text: &str) -> (String, OffsetMap, Vec<PiiFinding>) {
-        if self.patterns.is_empty() || text.is_empty() {
+        if (self.patterns.is_empty() && self.name_gazetteer.is_none()) || text.is_empty() {
             return (text.to_string(), OffsetMap::default(), Vec::new());
         }
 
-        let matches = self.find_matches(text);
+        let mut matches = self.find_matches(text);
+        // Tier-2: personal-name gazetteer. Appended to the Tier-1 match list
+        // before overlap resolution so a name spanning a regex match is
+        // resolved deterministically (greedy earliest-end scheduling).
+        if let Some(gaz) = &self.name_gazetteer {
+            matches.extend(self.find_name_matches(text, gaz));
+        }
         let resolved = resolve_overlaps(matches);
         build_scrubbed(text, &resolved)
     }
@@ -425,8 +973,12 @@ impl Scrubber {
             }
             let anchors_hit =
                 scan_anchors(text, m.start(), m.end(), self.anchor_window, cp.anchors);
-            let confidence =
-                compute_confidence(cp.base_confidence, anchors_hit.len(), cp.validator);
+            let confidence = compute_confidence(
+                cp.base_confidence,
+                anchors_hit.len(),
+                cp.validator,
+                validator_ok,
+            );
             if confidence < self.min_confidence {
                 continue;
             }
@@ -437,6 +989,44 @@ impl Scrubber {
                 report_only: self.report_only.contains(cp.entity),
                 finding: PiiFinding {
                     entity: cp.entity.to_string(),
+                    offset_start: offset_to_u32(m.start()),
+                    offset_end: offset_to_u32(m.end()),
+                    confidence,
+                    anchors_hit: anchors_hit.iter().map(|s| (*s).to_string()).collect(),
+                },
+            });
+        }
+        out
+    }
+
+    /// Tier-2 gazetteer pass: finds every personal-name phrase in `text` and
+    /// scores it with the same anchor-window model as Tier 1. Multi-token
+    /// names (containing a space) start at a higher base confidence because a
+    /// full-name phrase is far less likely to be a coincidental word hit.
+    fn find_name_matches(&self, text: &str, gaz: &NameGazetteer) -> Vec<PiiMatch> {
+        let mut out = Vec::new();
+        for m in gaz.regex.find_iter(text) {
+            let anchors_hit =
+                scan_anchors(text, m.start(), m.end(), self.anchor_window, ANCHOR_NAME);
+            let matched = &text[m.start()..m.end()];
+            let base = if matched.contains(' ') {
+                NAME_BASE_MULTI
+            } else {
+                NAME_BASE_SINGLE
+            };
+            let boost =
+                f32::from(u8::try_from(anchors_hit.len().min(255)).unwrap_or(255)) * ANCHOR_DELTA;
+            let confidence = (base + boost).min(ANCHOR_CAP);
+            if confidence < self.min_confidence {
+                continue;
+            }
+            out.push(PiiMatch {
+                start: m.start(),
+                end: m.end(),
+                replacement: NAME_REPLACEMENT.to_string(),
+                report_only: self.report_only.contains("person_name"),
+                finding: PiiFinding {
+                    entity: "person_name".to_string(),
                     offset_start: offset_to_u32(m.start()),
                     offset_end: offset_to_u32(m.end()),
                     confidence,
@@ -642,18 +1232,25 @@ fn window_forward(text: &str, from: usize, words: usize) -> usize {
 // Confidence scoring
 // ===========================================================================
 
-/// Weighted-additive confidence: `base + anchors × delta`, gated by
-/// validator. For Luhn-validated cards, a passing checksum floors the score
-/// at [`LUHN_FLOOR`]; a failing checksum is unreachable here (gated out
-/// upstream) and returns `0.0` defensively.
+/// Weighted-additive confidence: `base + anchors × delta`, modulated by the
+/// validator. For Luhn-validated cards, a passing checksum floors the score at
+/// [`LUHN_FLOOR`]; a failing checksum scores at [`LUHN_FAIL_CONFIDENCE`] (the
+/// candidate is still emitted — fail-safe). Hard-gated validators are dropped
+/// upstream and never reach here. The result is capped at [`ANCHOR_CAP`].
 #[must_use]
-fn compute_confidence(base: f32, anchors_hit: usize, validator: Validator) -> f32 {
+fn compute_confidence(
+    base: f32,
+    anchors_hit: usize,
+    validator: Validator,
+    validator_passed: bool,
+) -> f32 {
     let boost = f32::from(u8::try_from(anchors_hit.min(255)).unwrap_or(255)) * ANCHOR_DELTA;
-    match validator {
-        Validator::Luhn => base.max(LUHN_FLOOR) + boost,
-        Validator::RoutingNumber | Validator::None => (base + boost).min(ANCHOR_CAP),
-    }
-    .min(ANCHOR_CAP)
+    let scored = match validator {
+        Validator::Luhn if validator_passed => base.max(LUHN_FLOOR),
+        Validator::Luhn => LUHN_FAIL_CONFIDENCE,
+        Validator::RoutingNumber | Validator::None => base,
+    };
+    (scored + boost).min(ANCHOR_CAP)
 }
 
 // ===========================================================================
@@ -967,21 +1564,55 @@ mod tests {
     }
 
     #[test]
-    fn invalid_credit_card_fails_luhn_and_is_not_redacted() {
-        // Same length but invalid checksum.
+    fn invalid_luhn_card_is_still_flagged_fail_safe() {
+        // Same length but invalid checksum. Fail-safe: a card-shaped number
+        // must still be flagged + redacted (a corrupted real card must not
+        // leak), just at lower confidence.
         let (out, map, findings) = scrub_with(
             "Card: 4111 1111 1111 1112 done.",
             &[BuiltInPattern::CreditCard],
         );
         assert_eq!(
-            out, "Card: 4111 1111 1111 1112 done.",
-            "invalid-Luhn sequence should NOT be redacted"
+            out, "Card: [CREDIT_CARD] done.",
+            "invalid-Luhn card-shaped number should still be redacted (fail-safe)"
+        );
+        assert_eq!(map.len(), 1);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].entity, "credit_card");
+        // Failing Luhn scores at LUHN_FAIL_CONFIDENCE before anchor boost.
+        // With the "card" anchor (+0.10) it should be ~0.65, and in any case
+        // strictly below the Luhn-pass floor of 0.90.
+        assert!(
+            findings[0].confidence < 0.90,
+            "failing-Luhn confidence {} should be below the pass floor 0.90",
+            findings[0].confidence
+        );
+        assert!(
+            findings[0].confidence >= LUHN_FAIL_CONFIDENCE,
+            "failing-Luhn confidence {} should be >= LUHN_FAIL_CONFIDENCE {}",
+            findings[0].confidence,
+            LUHN_FAIL_CONFIDENCE
+        );
+    }
+
+    #[test]
+    fn high_min_confidence_restores_credit_card_precision() {
+        // With a high threshold, a Luhn-failing card without strong anchors is
+        // dropped, restoring precision for users who prefer it.
+        let scrubber = Scrubber::from_profile(&ScrubProfile {
+            patterns: vec![BuiltInPattern::CreditCard],
+            custom: vec![],
+            min_confidence: 0.90,
+            ..ScrubProfile::default()
+        })
+        .unwrap();
+        // No card anchors nearby → failing-Luhn confidence stays at 0.55.
+        let (out, map, _) = scrubber.scrub("token 4111 1111 1111 1112 end");
+        assert!(
+            !out.contains("[CREDIT_CARD]"),
+            "low-confidence card should be dropped at min_confidence=0.90: {out}"
         );
         assert!(map.is_empty());
-        assert!(
-            findings.is_empty(),
-            "no finding should be emitted for a failed gate"
-        );
     }
 
     #[test]
@@ -1159,6 +1790,95 @@ mod tests {
             1,
             "only the scrubbed match creates an offset edit"
         );
+    }
+
+    // ----- Tier-2 name gazetteer -----
+
+    fn scrub_with_names(
+        text: &str,
+        names: &[&str],
+        use_generic: bool,
+    ) -> (String, OffsetMap, Vec<PiiFinding>) {
+        let scrubber = Scrubber::from_profile(&ScrubProfile {
+            patterns: vec![],
+            custom: vec![],
+            names: names.iter().map(std::string::ToString::to_string).collect(),
+            use_generic_names: use_generic,
+            ..ScrubProfile::default()
+        })
+        .expect("name profile compiles");
+        scrubber.scrub(text)
+    }
+
+    #[test]
+    fn name_gazetteer_redacts_user_supplied_name() {
+        let (out, map, findings) =
+            scrub_with_names("Contact Jane Doe today.", &["Jane Doe"], false);
+        assert_eq!(out, "Contact [NAME] today.");
+        assert_eq!(map.len(), 1);
+        assert_eq!(findings[0].entity, "person_name");
+        // Multi-token name → NAME_BASE_MULTI floor.
+        assert!(findings[0].confidence >= NAME_BASE_MULTI);
+    }
+
+    #[test]
+    fn name_gazetteer_is_case_insensitive_and_word_bound() {
+        // Case-insensitive.
+        let (out, _, _) = scrub_with_names("signed by jane doe esq", &["Jane Doe"], false);
+        assert!(out.contains("[NAME]"), "lowercase must match: {out}");
+        // Word-boundary: "Janet" must NOT match "Jane".
+        let (out2, _, findings2) = scrub_with_names("Janet is here", &["Jane"], false);
+        assert!(
+            !out2.contains("[NAME]"),
+            "substring inside another word must not match: {out2}"
+        );
+        assert!(findings2.is_empty());
+    }
+
+    #[test]
+    fn generic_names_are_opt_in() {
+        // "Alice" is in the generic list. Opt-OUT (default) → no match.
+        let (out_off, _, findings_off) = scrub_with_names("Alice went home", &[], false);
+        assert!(
+            findings_off.is_empty(),
+            "generic names must NOT fire when use_generic_names=false"
+        );
+        assert!(!out_off.contains("[NAME]"));
+        // Opt-IN → match.
+        let (out_on, _, findings_on) = scrub_with_names("Alice went home", &[], true);
+        assert_eq!(findings_on.len(), 1);
+        assert!(
+            out_on.contains("[NAME]"),
+            "generic name must fire when opted in: {out_on}"
+        );
+    }
+
+    #[test]
+    fn gazetteer_name_resolves_against_tier1_overlap() {
+        // An email regex match and a name match cannot both win the same span.
+        // Greedy earliest-end scheduling picks one deterministically.
+        let scrubber = Scrubber::from_profile(&ScrubProfile {
+            patterns: vec![BuiltInPattern::Email],
+            names: vec!["Alice Example".to_string()],
+            ..ScrubProfile::default()
+        })
+        .unwrap();
+        let (out, _, findings) = scrubber.scrub("Reach Alice Example at alice@example.com");
+        // Exactly one finding per entity; no span is double-counted.
+        assert!(
+            findings.iter().filter(|f| f.entity == "email").count() == 1,
+            "email finding must survive: {findings:?}"
+        );
+        assert!(
+            findings
+                .iter()
+                .filter(|f| f.entity == "person_name")
+                .count()
+                == 1,
+            "name finding must survive: {findings:?}"
+        );
+        assert!(out.contains("[EMAIL]"));
+        assert!(out.contains("[NAME]"));
     }
 
     // ----- OffsetMap projection -----

@@ -4,6 +4,63 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html).
 
+## [1.0.0] — Zero-trust data purification engine
+
+First stable release. The single v1.0 blocker — destructive coordinate-aware
+PDF redaction — is resolved. All automated gates are green.
+
+### Added — destructive PDF redaction (`pdf-redact` feature, Phase 4)
+- **`sanitizer::pdfium::redact_pdf`** — coordinate-aware destructive redaction
+  backed by `pdfium-render`, which binds a runtime `libpdfium` (no compile-time
+  native link). Two modes:
+  - **`Redact`** (default): for each PII span the bounding rectangle is
+    computed from glyph boxes, every text page object overlapping it is
+    **deleted** from the page-object tree (the bytes cannot be extracted or
+    copied), and a solid black rectangle is drawn over the region.
+  - **`Flatten`**: blackout rectangles are drawn, the page is rasterized to a
+    300 DPI bitmap, the entire vector/text object layer is dropped, and the
+    image becomes the page's only object — no recoverable text layer.
+- `--pdf-mode redact|flatten|text-only` on `bitvanes scrub`. Fails **closed**
+  (`FeatureNotEnabled`) if `libpdfium` is absent, so unredacted bytes are never
+  emitted.
+
+### Added — credit-card fail-safe detection
+- `Validator::Luhn` is now a **soft confidence modifier**, not a hard gate: a
+  card-shaped number that fails the Luhn checksum is still flagged and
+  redacted at lower confidence (`0.55`) instead of being silently dropped.
+  Rationale: a transcription/OCR error on a real card must not leak the card
+  number. Raise `min_confidence` (e.g. `0.85`) to restore precision.
+- ABA routing-number validation remains a hard gate (9-digit numbers are too
+  common to flag without the checksum).
+
+### Added — Tier-2 personal-name gazetteer
+- `ScrubProfile::names` — a customer-supplied list of name phrases, matched
+  case-insensitively on word boundaries (e.g. `["Jane Doe", "Akhmad"]`).
+  Multi-token names score higher than single tokens. Wired into `Bitvanes.toml`
+  as `[pii] names = [...]`. Far more precise than regex name heuristics; the
+  customer supplies the names relevant to their corpus.
+- `ScrubProfile::use_generic_names` — opt-in bundled common-given-name starter
+  list (off by default; generic names are FP-prone on general prose).
+
+### Changed — tiktoken-rs removed
+- The `tiktoken-rs` dependency (which embedded multi-MB BPE vocab files via
+  `include_str!`) is **removed**. Token counting now uses a pure-arithmetic
+  heuristic (≈ 4 chars/token). The `Tokenizer` API and `ChunkConfig.tokenizer`
+  field are retained for wire-format compatibility; all `TokenizerKind`
+  variants resolve to the same estimator. The chunker and TUI behave
+  identically; the heavy vocab dependency is gone.
+- `BitVanesError::FeatureNotEnabled` now carries `Box<str>` (was `&'static str`)
+  so it can describe a runtime-missing backend with dynamic detail.
+- `redact_pdf_blackout` (the always-erroring placeholder stub) is **removed**;
+  the real implementation is `sanitizer::pdfium::redact_pdf`.
+
+### Verification
+- core: 183 unit/integration/doctests passing; `clippy -D warnings` clean
+  across all features; `cargo fmt --check` clean.
+- cli: 13 tests passing; `clippy -D warnings` clean; release build with the
+  `dashboard` feature produces a self-contained `bitvanes` binary.
+- web: `npm run build` clean (206 KB / 65 KB gzipped JS).
+
 ## [1.0.0-rc.1] — Production-readiness audit
 
 Release candidate. Promoting to a clean 1.0.0 is gated on the single item
@@ -27,13 +84,12 @@ listed under **Known limitations** below.
 - Drag-and-drop dashboard UI (file → `/scrub` → before/after + categorized
   findings).
 
-### Known limitations (the one v1.0 blocker)
-- **Destructive coordinate-aware PDF redaction (`--pdf-mode redact`/`flatten`)
-  is not yet implemented.** Text-layer PDF sanitization IS shipped
-  (`pdf-redact` feature); the destructive content-stream removal / page-flatten
-  path needs the `pdfium-render` backend (native lib + scoped `unsafe`) and is
-  tracked as `TODO(phase-4-pdfium)`. The stub fails closed
-  (`FeatureNotEnabled`) — it never claims a redaction it did not perform.
+### Known limitations at rc.1
+- Destructive coordinate-aware PDF redaction was **not yet implemented** at the
+  rc.1 cut — text-layer PDF sanitization was shipped (`pdf-redact` feature),
+  but the destructive content-stream removal / page-flatten path needed the
+  `pdfium-render` backend. The stub failed closed (`FeatureNotEnabled`). **This
+  was resolved in 1.0.0** (see above).
 
 ## [0.5.0] — Rebrand to Zero-Trust Data Purification Engine
 

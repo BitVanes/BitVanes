@@ -1,11 +1,13 @@
 //! `bitvanes daemon` — local HTTP daemon bound to **127.0.0.1 only** (zero-trust:
 //! never reachable off-box). Provides `/health`, `/filter` (POST body →
-//! sanitized text), and optionally serves the built web dashboard from disk.
+//! sanitized text), `/scrub` (POST JSON → redacted text + categorized findings
+//! for the dashboard), and optionally serves the built web dashboard either
+//! from disk (`--dashboard-dir`) or compile-time-embedded via `rust-embed`
+//! (the `dashboard` feature).
 //!
-//! TODO(phase-6-followup): `/scrub` multipart file upload, dashboard asset
-//! bundling via `rust-embed`, and request logging/audit. The current `/filter`
-//! collects the full request body before sanitizing; true streaming of the HTTP
-//! request body is a follow-up.
+//! Future hardening (not v1 blockers): multipart file upload, true streaming of
+//! the HTTP request body (the current handlers buffer the body before
+//! sanitizing), and request audit logging.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,6 +25,7 @@ use tower_http::services::ServeDir;
 use bitvanes_core::pii::Scrubber;
 use bitvanes_core::sanitizer::{RedactionPolicy, sanitize_text};
 
+use crate::entitlement::{EntitlementChecker, EntitlementStatus, resolve_checker};
 use crate::shared::{ConfigArg, RulesArg, resolve_config};
 /// `bitvanes daemon --port <P> [--config ...] [--dashboard-dir <DIR>]`.
 #[derive(Args, Debug, Clone)]
@@ -40,21 +43,32 @@ pub struct DaemonArgs {
     /// Directory of built web dashboard assets to serve at `/` (optional).
     #[arg(long, value_name = "DIR")]
     pub dashboard_dir: Option<std::path::PathBuf>,
+
+    /// License key (overrides `BITVANES_LICENSE_KEY`). See `src/entitlement.rs`
+    /// for the wire-format contract.
+    #[arg(long, value_name = "KEY")]
+    pub license_key: Option<String>,
 }
 
-/// Shared state for every request: the compiled scrubber + output policy.
+/// Shared state for every request: the compiled scrubber + output policy +
+/// resolved entitlement.
 #[derive(Clone)]
 struct DaemonState {
     scrubber: Arc<Scrubber>,
     policy: RedactionPolicy,
+    entitlement: Arc<dyn EntitlementChecker>,
 }
 
 /// Entry point for `bitvanes daemon`.
 pub fn run(args: DaemonArgs) -> Result<(), Box<dyn std::error::Error>> {
     let resolved = resolve_config(args.config.config.as_deref(), args.rules.rules.as_deref())?;
+    let entitlement = resolve_checker(args.license_key.as_deref());
+    let status = entitlement.status();
+    eprintln!("BitVanes entitlement: {}", status.label());
     let state = DaemonState {
         scrubber: Arc::new(resolved.scrubber),
         policy: resolved.policy,
+        entitlement,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -72,6 +86,7 @@ async fn serve(
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     let mut router = Router::new()
         .route("/health", get(health))
+        .route("/entitlement", get(entitlement))
         .route("/filter", post(filter))
         .route("/scrub", post(scrub))
         .with_state(state);
@@ -147,6 +162,23 @@ use embedded::asset as embedded_asset;
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// GET `/entitlement` — the resolved license/plan status. The daemon resolves
+/// entitlement once at startup (no per-request network), so this is a cheap
+/// cached read.
+async fn entitlement(State(state): State<DaemonState>) -> impl IntoResponse {
+    let s = state.entitlement.status();
+    let (plan, seats) = match &s {
+        EntitlementStatus::Licensed { plan, seats } => (plan.as_str(), Some(*seats)),
+        _ => ("open-source", None),
+    };
+    Json(serde_json::json!({
+        "status": s.label(),
+        "plan": plan,
+        "seats": seats,
+        "allow_paid_features": s.allow_paid_features(),
+    }))
 }
 
 /// POST `/filter` — sanitize the request body (treated as UTF-8 text) and

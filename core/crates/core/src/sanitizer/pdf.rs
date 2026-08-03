@@ -1,28 +1,16 @@
-//! PDF sanitization.
-//!
-//! Two layers are planned:
+//! PDF sanitization (text-layer path).
 //!
 //! - **Text-layer sanitization** ([`sanitize_pdf_text`]): extract the PDF's
 //!   text layer, detect PII with the [`Scrubber`], and emit sanitized text
-//!   (masked / placeholder / hashed per a [`RedactionPolicy`]). Available now.
-//! - **Destructive coordinate-aware blackout** ([`redact_pdf_blackout`]):
-//!   rewrite the PDF content stream to *remove* the PII text bytes and/or
-//!   flatten pages to images. This requires a PDF renderer/writer backend
-//!   (`pdfium-render`); it is `TODO(phase-4-pdfium)` and currently returns
-//!   [`BitVanesError::FeatureNotEnabled`] so the API surface is stable.
-//!
-//! # Why destructive blackout is not yet implemented
-//!
-//! Per the rebrand's governing invariant #1 (destructive redaction = fail
-//! closed), we refuse to ship a half-working content-stream rewriter that
-//! paints black boxes over text while leaving the underlying text bytes
-//! recoverable. That would give a false sense of security. The real backend
-//! needs `pdfium` (a C library) which is gated on a build environment that can
-//! fetch/link the native binary and on a scoped `unsafe` module.
+//!   (masked / placeholder / hashed per a [`RedactionPolicy`]). This needs no
+//!   native backend — it works on any build with the `pdf-redact` feature.
+//! - **Destructive coordinate-aware blackout** (`redact_pdf` in
+//!   [`super::pdfium`]): rewrite the PDF content stream to *remove* the PII
+//!   text bytes and/or flatten pages to images. Backed by `pdfium-render`
+//!   (loaded at runtime); fail-closed if `libpdfium` is absent.
 //!
 //! [`Scrubber`]: crate::pii::Scrubber
 //! [`RedactionPolicy`]: crate::sanitizer::RedactionPolicy
-//! [`BitVanesError::FeatureNotEnabled`]: crate::BitVanesError::FeatureNotEnabled
 
 use crate::error::{BitVanesError, Result};
 use crate::pii::{PiiFinding, Scrubber};
@@ -69,22 +57,6 @@ pub fn sanitize_pdf_text(
     })
 }
 
-/// Destructive coordinate-aware PDF blackout: returns a sanitized PDF whose
-/// content stream no longer carries the PII text bytes.
-///
-/// `TODO(phase-4-pdfium)`: requires the `pdfium` backend. Currently returns
-/// [`BitVanesError::FeatureNotEnabled`] so callers can detect the missing
-/// backend and fall back to text-layer sanitization.
-///
-/// # Errors
-///
-/// Always [`BitVanesError::FeatureNotEnabled`] until the pdfium backend lands.
-pub fn redact_pdf_blackout(_bytes: &[u8], _scrubber: &Scrubber) -> Result<Vec<u8>> {
-    Err(BitVanesError::FeatureNotEnabled(
-        "pdf coordinate blackout requires the pdfium backend (TODO phase-4-pdfium)",
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,11 +85,5 @@ mod tests {
         let err = sanitize_pdf_text(b"not a pdf", &email_scrubber(), &RedactionPolicy::default())
             .unwrap_err();
         assert!(matches!(err, BitVanesError::InvalidInput(_)));
-    }
-
-    #[test]
-    fn blackout_backend_is_not_yet_available() {
-        let err = redact_pdf_blackout(b"", &email_scrubber()).unwrap_err();
-        assert!(matches!(err, BitVanesError::FeatureNotEnabled(_)));
     }
 }

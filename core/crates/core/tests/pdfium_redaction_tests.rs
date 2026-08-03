@@ -16,7 +16,11 @@ const FIXTURE: &[u8] = include_bytes!("fixtures/pii_sample.pdf");
 
 fn ssn_scrubber() -> Scrubber {
     Scrubber::from_profile(&ScrubProfile {
-        patterns: vec![BuiltInPattern::Ssn, BuiltInPattern::Email, BuiltInPattern::CreditCard],
+        patterns: vec![
+            BuiltInPattern::Ssn,
+            BuiltInPattern::Email,
+            BuiltInPattern::CreditCard,
+        ],
         ..ScrubProfile::default()
     })
     .expect("scrubber compiles")
@@ -99,8 +103,7 @@ fn malformed_pdf_fails_closed() {
     let result = redact_pdf(garbage, &ssn_scrubber(), PdfRedactMode::Redact);
     assert!(
         result.is_err(),
-        "malformed PDF must fail closed, got: {:?}",
-        result
+        "malformed PDF must fail closed, got: {result:?}"
     );
 }
 

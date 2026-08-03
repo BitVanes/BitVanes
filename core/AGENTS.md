@@ -6,43 +6,42 @@ Build commands for the `bitvanes-core` workspace.
 
 ```bash
 cargo fmt --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --workspace --all-targets \
+  --features cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config -- -D warnings
+cargo test --workspace \
+  --features cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config
 ```
 
-## Wasm build
+> Do **not** use `--all-features`: `pii-model` enables an `unimplemented!()`
+> stub. Always pass the explicit feature list above.
+
+## Wasm build (legacy binding)
 
 ```bash
 wasm-pack build crates/wasm --target web --out-dir pkg
-```
-
-Check bundle size (target: reasonable for a SaaS dashboard, ~4-5 MB gzipped):
-
-```bash
 gzip -c crates/wasm/pkg/bitvanes_wasm_bg.wasm | wc -c
 ```
+
+The web dashboard no longer uses this — it talks to the native daemon. The
+wasm crate is retained as a legacy embedding surface.
 
 ## Feature flags
 
 - `ipc`: Arrow IPC stream writer. Native-only (CLI).
 - `csv`: Arrow CSV writer. Native-only.
 - `parallel`: Rayon parallel batch (`run_pipeline_batch`) + parallel regex sweep. Native-only.
-- `cli-pdf`: Native PDF text extraction via pdf-extract. Native-only (browser uses PDF.js).
+- `cli-pdf`: Native PDF text extraction via pdf-extract. Native-only.
 - `office`: DOCX/PPTX/XLSX/EPUB/RTF parsing. Native-only.
 - `mmap`: Memory-mapped file I/O for large files. Native-only.
-- `pii-model`: Tier-2 NER (stub only — trait + ModelDetector placeholder).
+- `stream`: Async rolling-window `StreamSanitizer` over `tokio::io`. Native-only.
+- `pdf-redact`: PDF sanitization — text-layer redaction + destructive
+  coordinate-aware blackout/flatten via runtime `pdfium-render` (implies
+  `cli-pdf`). Fails closed (`FeatureNotEnabled`) if `libpdfium` is absent.
+- `config`: `Bitvanes.toml` user-facing config loader.
+- `pii-model`: Tier-2 NER trait + `ModelDetector` **stub** (`unimplemented!()`).
 
-> Rebrand in progress: the `embeddings`/RAG surface has been removed. The
-> wasm/browser crate is slated for removal (see `REBRAND.md`, Phase 7).
-
-BPE vocab is **unconditional** (tiktoken-rs embeds it with no
-feature toggle), so every build is offline.
-
-Run tests with all features:
-
-```bash
-cargo test --workspace --features cli-pdf,parallel,ipc,csv,office,mmap
-```
+Token counting uses a pure-arithmetic **chars-per-token heuristic** (no BPE
+dependency, no embedded vocab), so every build is fully offline.
 
 ## Architecture
 
@@ -50,8 +49,11 @@ Pipeline: parse -> scrub (detect + redact PII) -> optional chunk -> Arrow assemb
 
 Entry point: `bitvanes_core::pipeline::run_pipeline(bytes, &cfg)`.
 
-Wasm export: `bitvanes_wasm::process(config_js, bytes) -> slot_id` (pending
-removal in Phase 7).
+PII/sanitizer surface:
+- `pii::Scrubber` detects PII (regex + Luhn/ABA + anchor windows).
+- `sanitizer::policy::{RedactionPolicy, sanitize_text}` applies mask/placeholder/hash.
+- `sanitizer::stream::StreamSanitizer` does bounded-memory rolling-window redaction.
+- `sanitizer::pdfium::redact_pdf` does destructive PDF redaction (Redact/Flatten).
 
 The wasm module exports Arrow data via zero-copy FFI pointers (Arrow C Data
 Interface). JS reads them using `arrow-js-ffi`'s `parseRecordBatch`.
@@ -61,3 +63,5 @@ Interface). JS reads them using `arrow-js-ffi`'s `parseRecordBatch`.
 - Rust stable (edition 2024), MSRV 1.85, pinned via `rust-toolchain.toml`.
 - `wasm-pack` 0.13+ for wasm builds.
 - `wasm32-unknown-unknown` target (auto-installed by rust-toolchain.toml).
+- PDF destructive redaction needs a runtime `libpdfium` on the host (not a
+  build-time dependency).
