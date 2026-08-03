@@ -1,0 +1,30 @@
+# Rust build artifacts
+/target
+**/target/
+*.rs.bk
+
+# wasm-pack output (generated JS/TS glue + .wasm binary)
+/pkg
+**/pkg/
+
+# Local cargo config overrides
+.cargo/config.local.toml
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bench / fuzz corpora (regenerated locally)
+criterion/
+fuzz/artifacts/
+fuzz/corpus/
+
+# Note: Cargo.lock IS committed by design. This workspace produces a wasm
+# cdylib binary artifact, so deterministic builds matter.

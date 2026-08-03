@@ -1,0 +1,14 @@
+# Wasm build configuration for bitvanes-core.
+#
+# Enables WebAssembly fixed-width SIMD (the `simd128` target feature) so the
+# backend can emit vectorized instructions for the regex/text-scanning hot
+# paths where LLVM auto-vectorises. This is a baseline flag: it *enables* the
+# capability; actual speedup depends on LLVM choosing to emit SIMD ops in
+# the compiled regex/chunker code. Verified at build time by CI asserting
+# the `simd128` feature string is present in the committed .wasm binary.
+#
+# Browser support: Chrome 91+, Firefox 89+, Safari 16.4+ (all 2021+). Safe to
+# ship unconditionally for a modern-only audience.
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
