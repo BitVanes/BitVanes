@@ -2,22 +2,20 @@
 //!
 //! Run with: `cargo run --example keygen`
 //!
+//! Uses a cryptographically-random keypair (OsRng) each run — there is NO
+//! committed seed, so the private key is never recoverable from the repo.
+//!
 //! Prints:
 //!   - the 32-byte **public key** as a Rust array literal (embed this in
-//!     `src/entitlement.rs` as the verification key),
+//!     `src/entitlement.rs` as `LICENSE_PUBKEY`),
 //!   - the 32-byte **private key** as hex (set this as
-//!     `BITVANES_LICENSE_PRIVATE_KEY` on the minting backend; NEVER ship it in
-//!     a binary),
+//!     `BITVANES_LICENSE_PRIVATE_KEY` on the minting backend; NEVER commit it),
 //!   - a sample `BV-SOLO-<jwt>` license signed by that key (for testing).
-//!
-//! This is a DEV keypair. For production, generate a fresh one, embed the new
-//! pubkey in the CLI, and keep the privkey in your backend secret store.
 
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
-use rand::SeedableRng;
-use rand::rngs::StdRng;
+use rand::rngs::OsRng;
 use serde_json::json;
 
 fn b64u(bytes: &[u8]) -> String {
@@ -46,11 +44,10 @@ fn mint_license(privkey: &SigningKey, sub: &str, tier: &str, exp_unix: i64) -> S
 }
 
 fn main() {
-    // Deterministic dev keypair (fixed seed) so the output is reproducible and
-    // matches the `DEV_PUBKEY` embedded in `src/entitlement.rs`. For a
-    // PRODUCTION keypair, change the seed (or use `OsRng`) and re-embed the
-    // new public key in the CLI.
-    let mut rng = StdRng::seed_from_u64(0xB175_0FF1CE_u64);
+    // Cryptographically random keypair — generated once, never reproducible
+    // from the repo. Embed the public key in the CLI; keep the private key in
+    // the backend secret store only.
+    let mut rng = OsRng;
     let signing_key = SigningKey::generate(&mut rng);
     let verifying_key = signing_key.verifying_key();
 

@@ -6,7 +6,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$repo = 'BitVanes/BitVanes'
+$repo = 'BitVanes/releases'
 $api = "https://api.github.com/repos/$repo/releases/latest"
 $assetName = 'bitvanes-x86_64-windows.zip'
 

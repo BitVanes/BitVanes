@@ -7,7 +7,7 @@
 
 set -eu
 
-REPO="BitVanes/BitVanes"
+REPO="BitVanes/releases"
 API="https://api.github.com/repos/${REPO}/releases/latest"
 
 err() { printf '\033[31m%s\033[0m\n' "$*" >&2; }

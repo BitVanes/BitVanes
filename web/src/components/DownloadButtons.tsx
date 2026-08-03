@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
-const REPO = 'BitVanes/BitVanes';
-const RELEASES_PAGE = 'https://github.com/BitVanes/BitVanes/releases';
+const REPO = 'BitVanes/releases';
+const RELEASES_PAGE = 'https://github.com/BitVanes/releases/releases';
 const API = `https://api.github.com/repos/${REPO}/releases/latest`;
 
 type Asset = { name: string; browser_download_url: string };
