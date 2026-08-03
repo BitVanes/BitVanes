@@ -4,6 +4,95 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html).
 
+## [1.0.0-rc.1] — Production-readiness audit
+
+Release candidate. Promoting to a clean 1.0.0 is gated on the single item
+listed under **Known limitations** below.
+
+### Audit fixes
+- Purged 6 residual `RAG` references in source comments (json/pptx/markdown/
+  schema parsers + the TUI title bar) — the codebase is now legacy-term-free.
+- CLI `filter` / `scrub` / `daemon` now apply a **default ruleset**
+  (email, ssn, phone, credit_card) when neither `--rules` nor a `Bitvanes.toml`
+  is supplied, so bare `bitvanes filter` redacts PII out of the box.
+- Added a `proptest` for the stream-boundary invariant (SSN split across an
+  arbitrary byte boundary is always redacted; 256 random cases).
+
+### Added — daemon dashboard (CLI `dashboard` feature)
+- `/scrub` POST endpoint returning `{ redacted, total, categories }` JSON for
+  the local dashboard.
+- `rust-embed` compile-time embedding of `web/dist`; `bitvanes daemon` now
+  serves the dashboard with no `--dashboard-dir` when built with
+  `--features dashboard`.
+- Drag-and-drop dashboard UI (file → `/scrub` → before/after + categorized
+  findings).
+
+### Known limitations (the one v1.0 blocker)
+- **Destructive coordinate-aware PDF redaction (`--pdf-mode redact`/`flatten`)
+  is not yet implemented.** Text-layer PDF sanitization IS shipped
+  (`pdf-redact` feature); the destructive content-stream removal / page-flatten
+  path needs the `pdfium-render` backend (native lib + scoped `unsafe`) and is
+  tracked as `TODO(phase-4-pdfium)`. The stub fails closed
+  (`FeatureNotEnabled`) — it never claims a redaction it did not perform.
+
+## [0.5.0] — Rebrand to Zero-Trust Data Purification Engine
+
+BitVanes is pivoting from a "RAG / LLM document chunker" to a **zero-trust
+data purification & stream filtering engine**. This release removes the
+embedding/RAG surface from the core library. Streaming, PDF coordinate
+redaction, the `Bitvanes.toml` config, and the daemon are tracked in
+`REBRAND.md` and land in subsequent phases.
+
+### Removed — breaking (wire format)
+- **`embeddings` cargo feature** and the ONNX Runtime integration (`ort`,
+  `tokenizers`, `ndarray` dependencies) deleted entirely.
+- **`EmbeddingConfig`** struct and the `PipelineConfig.embeddings` field
+  removed. Old `profile.json` payloads carrying an `embeddings` key will fail
+  to deserialize — a deliberate wire break.
+- **`embed.rs` module** deleted: the `Embedder` trait, `OrtEmbedder`,
+  `mean_pool`, and `l2_normalize` are gone.
+- **`run_pipeline_with_embeddings`** and **`run_pipeline_with_strategy`**
+  removed from `pipeline`. Use `run_pipeline`.
+- **`ChunkStrategy::Semantic`** removed (it was embedding-guided).
+  `ChunkStrategy` is now `#[non_exhaustive]` with only `Structural`;
+  `ChunkConfig` derives `Eq` again.
+- **`chunk_document_semantic`** removed from `chunk`.
+- **Arrow `embedding` column** removed; the output schema is now **10
+  columns** (was 11). `EMBEDDING_DIM`, `output_schema_with_dim`,
+  `chunks_to_batch_with_embeddings`, `build_null_embedding`, and
+  `build_real_embedding` removed.
+- **`examples/custom_embedder.rs`** deleted.
+
+### Changed
+- Workspace `keywords`/`categories` rebranded (`rag`/`ai`/`wasm` →
+  `pii`/`redaction`/`privacy`/`sanitization`).
+- Crate description rewritten to the purification value proposition.
+
+### Added — module reorganization (Phase 2)
+- **`pii/` module**: `scrub.rs` renamed to `pii/detect.rs` and `pii_detect.rs`
+  to `pii/model.rs` under a new `pii/mod.rs` parent. Canonical paths are now
+  `bitvanes_core::pii::{Scrubber, PiiFinding, OffsetMap, PiiDetector,
+  ModelDetector, scrub_document, scrub_text}`. The old `crate::scrub::` and
+  `crate::pii_detect::` paths are removed (breaking).
+- **`sanitizer/` module** (new): configurable output policies
+  (`RedactionPolicy::{Placeholder, Mask, Hash}`) applied via `sanitize_text`,
+  plus `SanitizationStats` (files / bytes / PII-by-type / MiB·s⁻¹ throughput)
+  for run-level reporting.
+- **`StreetAddress` built-in pattern**: conservative US street-address
+  heuristic (building number + capitalized name + suffix), low base
+  confidence with anchor boosting. `Name` detection is deferred to the
+  Tier-2 NER trait (regex name matching is too FP-prone to ship).
+- `sha2` dependency added for the `[SHA256:…]` hash policy.
+
+### Added — async streaming sanitizer (Phase 3)
+- **`stream` cargo feature** + `sanitizer::stream::StreamSanitizer`: bounded-memory
+  rolling-window redaction over `tokio::io::AsyncRead` / `AsyncWrite`. Holds back
+  a configurable match window (`max_match_len`, default 1024) so PII split across
+  read-chunk boundaries is still redacted, and never splits a UTF-8 codepoint.
+  Memory use is `O(max_match_len)` regardless of input size. Applicable to
+  text/JSON/CSV pipes (binary container formats go through the document path).
+- New deps: `tokio` (io-util/rt/macros) and `bytes`, both behind `stream`.
+
 ## [0.4.0] — 2026-07
 
 ### Added — File-format breadth

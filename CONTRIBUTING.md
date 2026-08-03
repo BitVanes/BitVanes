@@ -7,17 +7,13 @@ expectations and the fastest path to a merged PR.
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --features cli-pdf,parallel,ipc,csv -- -D warnings
-cargo test --workspace --features cli-pdf,parallel,ipc,csv
+cargo clippy --workspace --all-targets --features cli-pdf,parallel,ipc,csv,office,mmap -- -D warnings
+cargo test --workspace --features cli-pdf,parallel,ipc,csv,office,mmap
 ```
 
-We avoid linking the `embeddings` feature in CI (its prebuilt `ort` static
-lib needs glibc ≥ 2.38); a compile-only `cargo check --all-features` in CI
-still catches regressions there. Locally, `cargo test --all-features` works on
-a recent Linux.
-
 Wasm: `wasm-pack build crates/wasm --target web --out-dir pkg` (target ≤ 5 MB
-gzipped).
+gzipped). NOTE: the wasm/browser surface is slated for removal — see
+`REBRAND.md` (Phase 7).
 
 ## Engineering expectations
 

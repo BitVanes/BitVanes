@@ -117,7 +117,7 @@ pub fn process_chunks(config_js: JsValue, bytes: &[u8]) -> Result<JsValue, JsVal
 
     let doc = bitvanes_core::parse::parse_bytes(bytes, &cfg)
         .map_err(|e| JsValue::from_str(&format!("parse: {e}")))?;
-    let (scrubbed, offset_map, findings) = bitvanes_core::scrub::scrub_document(doc, &cfg.scrub)
+    let (scrubbed, offset_map, findings) = bitvanes_core::pii::scrub_document(doc, &cfg.scrub)
         .map_err(|e| JsValue::from_str(&format!("scrub: {e}")))?;
     let mut chunks =
         bitvanes_core::chunk::chunk_document(&scrubbed, &cfg.chunk, cfg.source_label.as_deref())

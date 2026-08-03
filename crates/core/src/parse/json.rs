@@ -1,4 +1,4 @@
-//! JSON parser: extracts text from structured JSON for RAG ingestion.
+//! JSON parser: extracts text from structured JSON for sanitization.
 //!
 //! For arrays, each element becomes a separate span. For objects, nested
 //! keys form the heading path and string values become paragraph text.

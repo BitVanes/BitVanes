@@ -27,40 +27,13 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
 
-/// The default embedding dimension (matches `OpenAI`
-/// `text-embedding-3-small` / `text-embedding-ada-002`). Models that
-/// produce a different dimension (e.g. MiniLM-L6-v2 = 384) should use
-/// [`output_schema_with_dim`] instead.
-/// is chosen over `List` so downstream vector DBs can mmap the column
-/// directly without an offset buffer.
-pub const EMBEDDING_DIM: usize = 1536;
-
 /// Returns the canonical output [`SchemaRef`] for a fully-processed
-/// pipeline run, using the default embedding dimension (1536).
+/// pipeline run (10 columns).
+///
+/// Column count and order are part of the public wire contract; changing
+/// them is a semver-major break.
 #[must_use]
 pub fn output_schema() -> SchemaRef {
-    output_schema_with_dim(EMBEDDING_DIM)
-}
-
-/// Builds the nested `pii_metadata` column's inner struct type:
-/// `Struct{entity: Utf8, confidence: Float32, offset_start: Int32,
-/// offset_end: Int32, anchors: List<Utf8>}`.
-fn pii_struct_fields() -> Fields {
-    vec![
-        Field::new("entity", DataType::Utf8, false),
-        Field::new("confidence", DataType::Float32, false),
-        Field::new("offset_start", DataType::Int32, false),
-        Field::new("offset_end", DataType::Int32, false),
-        Field::new_list("anchors", Field::new("item", DataType::Utf8, true), false),
-    ]
-    .into()
-}
-
-/// Returns the output schema with a specific embedding column dimension.
-/// Use when generating embeddings with a non-default model (e.g. `MiniLM`
-/// produces 384-dim vectors).
-#[must_use]
-pub fn output_schema_with_dim(embedding_dim: usize) -> SchemaRef {
     Arc::new(Schema::new(vec![
         Field::new("chunk_index", DataType::UInt32, false),
         Field::new("chunk_id", DataType::Utf8, false),
@@ -88,13 +61,21 @@ pub fn output_schema_with_dim(embedding_dim: usize) -> SchemaRef {
             ))),
             true,
         ),
-        Field::new_fixed_size_list(
-            "embedding",
-            Field::new("item", DataType::Float32, true),
-            i32::try_from(embedding_dim).expect("embedding dim fits in i32"),
-            true,
-        ),
     ]))
+}
+
+/// Builds the nested `pii_metadata` column's inner struct type:
+/// `Struct{entity: Utf8, confidence: Float32, offset_start: Int32,
+/// offset_end: Int32, anchors: List<Utf8>}`.
+fn pii_struct_fields() -> Fields {
+    vec![
+        Field::new("entity", DataType::Utf8, false),
+        Field::new("confidence", DataType::Float32, false),
+        Field::new("offset_start", DataType::Int32, false),
+        Field::new("offset_end", DataType::Int32, false),
+        Field::new_list("anchors", Field::new("item", DataType::Utf8, true), false),
+    ]
+    .into()
 }
 
 #[cfg(test)]
@@ -106,7 +87,7 @@ mod tests {
         let s = output_schema();
         assert_eq!(
             s.fields().len(),
-            11,
+            10,
             "column count must match the documented contract"
         );
 
@@ -124,7 +105,6 @@ mod tests {
                 "char_offset_start",
                 "char_offset_end",
                 "pii_metadata",
-                "embedding",
             ]
         );
     }
@@ -154,8 +134,6 @@ mod tests {
         assert!(s.field_with_name("heading_path").unwrap().is_nullable());
         // pii_metadata may be null (chunk with no PII findings).
         assert!(s.field_with_name("pii_metadata").unwrap().is_nullable());
-        // embedding is populated downstream; nullable in v1.
-        assert!(s.field_with_name("embedding").unwrap().is_nullable());
     }
 
     #[test]
@@ -188,35 +166,10 @@ mod tests {
     }
 
     #[test]
-    fn output_schema_embedding_has_correct_dimension() {
-        let s = output_schema();
-        let f = s.field_with_name("embedding").unwrap();
-        match f.data_type() {
-            DataType::FixedSizeList(_, dim) => {
-                assert_eq!(
-                    *dim,
-                    i32::try_from(EMBEDDING_DIM).expect("EMBEDDING_DIM fits in i32")
-                );
-            }
-            other => panic!("embedding must be FixedSizeList, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn output_schema_is_consistent() {
         // Two calls must return structurally identical schemas.
         let a = output_schema();
         let b = output_schema();
         assert_eq!(a.as_ref(), b.as_ref());
-    }
-
-    #[test]
-    fn output_schema_with_dim_uses_correct_dimension() {
-        let s = output_schema_with_dim(384);
-        let f = s.field_with_name("embedding").unwrap();
-        match f.data_type() {
-            DataType::FixedSizeList(_, dim) => assert_eq!(*dim, 384),
-            other => panic!("expected FixedSizeList, got {other:?}"),
-        }
     }
 }

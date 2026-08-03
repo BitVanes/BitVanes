@@ -3,7 +3,7 @@
 //! Walks `CommonMark` + GitHub-Flavored Markdown events and produces a
 //! [`Document`] whose [`TextSpan`]s preserve heading ancestry and section
 //! classification. The parser strips all inline formatting (bold, italic,
-//! links) down to plain text - the chunker and downstream RAG pipeline
+//! links) down to plain text - the chunker and downstream pipeline
 //! operate on plain text, not on raw Markdown.
 //!
 //! # Heading ancestry
@@ -20,7 +20,7 @@
 //! ## Other          -> stack: ["Title", "Other"]
 //! ```
 //!
-//! Headings themselves do NOT emit spans - they carry no RAG value on
+//! Headings themselves do NOT emit spans - they carry no text value on
 //! their own. Their text lives on in the `heading_path` of subsequent
 //! content spans.
 

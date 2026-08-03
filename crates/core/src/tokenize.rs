@@ -6,10 +6,10 @@
 //!
 //! # Zero-telemetry
 //!
-//! The vocab files are embedded at compile time by `tiktoken-rs` itself
-//! via `include_str!`. That crate contains no network code and exposes no
-//! feature to disable embedding, so zero-telemetry is unconditional in
-//! every build — it is not gated by a cargo feature.
+//! The vocab files are compiled in at build time by `tiktoken-rs` itself
+//! via `include_str!`. That crate contains no network code, so
+//! zero-telemetry is unconditional in every build — it is not gated by a
+//! cargo feature.
 
 use tiktoken_rs::CoreBPE;
 

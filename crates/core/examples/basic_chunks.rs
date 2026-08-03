@@ -15,7 +15,7 @@ fn main() -> bitvanes_core::Result<()> {
                \n\
                ## Storage\n\
                \n\
-               Output is an Apache Arrow RecordBatch with nine columns.";
+               Output is an Apache Arrow RecordBatch with ten columns.";
 
     let doc = MarkdownParser.parse(src, &PipelineConfig::default())?;
     let chunk_cfg = ChunkConfig {

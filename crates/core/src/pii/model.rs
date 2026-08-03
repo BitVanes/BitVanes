@@ -1,6 +1,6 @@
 //! Tier-2 pluggable PII detection: an extension point for ML/NLP-based
 //! named-entity recognisers (NER) that complement the Tier-1 regex +
-//! checksum engine in [`crate::scrub`].
+//! checksum engine in [`crate::pii::detect`].
 //!
 //! # Design
 //!
@@ -30,7 +30,7 @@
 //! ```
 
 use crate::error::Result;
-use crate::scrub::PiiFinding;
+use crate::pii::detect::PiiFinding;
 
 /// A pluggable Tier-2 PII detector (NER model, gazetteer, ...).
 ///

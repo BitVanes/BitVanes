@@ -8,14 +8,13 @@
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, FixedSizeListBuilder, Float32Builder, Int32Builder, ListArray, ListBuilder,
-    NullBufferBuilder, RecordBatch, StringArray, StringBuilder, StringDictionaryBuilder,
-    StructArray, UInt16Array, UInt32Array,
+    ArrayRef, Float32Builder, Int32Builder, ListArray, ListBuilder, NullBufferBuilder, RecordBatch,
+    StringArray, StringBuilder, StringDictionaryBuilder, StructArray, UInt16Array, UInt32Array,
 };
 use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field, Int8Type};
 
-use crate::arrow_io::{EMBEDDING_DIM, output_schema};
+use crate::arrow_io::output_schema;
 use crate::error::Result;
 use crate::schema::{ChunkSpec, SectionKind};
 
@@ -24,10 +23,7 @@ use crate::schema::{ChunkSpec, SectionKind};
 ///
 /// Column layout (positional): `chunk_index`, `chunk_id`, `text`,
 /// `token_count`, `source_path`, `heading_path`, `section_kind`,
-/// `char_offset_start`, `char_offset_end`, `pii_metadata`, `embedding`.
-///
-/// The `embedding` column is all-null in v1 (populated downstream by the
-/// user's model, not by this engine).
+/// `char_offset_start`, `char_offset_end`, `pii_metadata`.
 ///
 /// # Errors
 ///
@@ -36,45 +32,13 @@ use crate::schema::{ChunkSpec, SectionKind};
 /// unchanged, but handled for safety).
 pub fn chunks_to_batch(chunks: &[ChunkSpec]) -> Result<RecordBatch> {
     let schema = output_schema();
-    let columns = build_columns(chunks, build_null_embedding(chunks.len()));
+    let columns = build_columns(chunks);
     Ok(RecordBatch::try_new(schema, columns)?)
 }
 
-/// Like [`chunks_to_batch`] but fills the `embedding` column with real
-/// `Float32` vectors instead of nulls.
-///
-/// `embeddings` must have exactly one `Vec<f32>` per chunk, each of length
-/// `dim`. The schema is built with [`output_schema_with_dim`] to match.
-///
-/// # Errors
-///
-/// Returns [`crate::error::BitVanesError`] if the embedding count doesn't
-/// match the chunk count, or if Arrow assembly fails.
-pub fn chunks_to_batch_with_embeddings(
-    chunks: &[ChunkSpec],
-    embeddings: &[Vec<f32>],
-    dim: usize,
-) -> Result<RecordBatch> {
-    if embeddings.len() != chunks.len() {
-        return Err(crate::error::BitVanesError::InvalidInput(format!(
-            "embeddings count ({}) does not match chunks count ({})",
-            embeddings.len(),
-            chunks.len()
-        )));
-    }
-    let schema = crate::arrow_io::output_schema_with_dim(dim);
-    let embedding = build_real_embedding(embeddings, dim);
-    let columns = build_columns(chunks, embedding);
-    Ok(RecordBatch::try_new(schema, columns)?)
-}
-
-/// Builds the 11 columns shared by both the null-embedding and
-/// real-embedding paths. `embedding` is supplied by the caller.
+/// Builds the 10 columns of the output [`RecordBatch`].
 #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-fn build_columns(
-    chunks: &[ChunkSpec],
-    embedding: arrow::array::FixedSizeListArray,
-) -> Vec<ArrayRef> {
+fn build_columns(chunks: &[ChunkSpec]) -> Vec<ArrayRef> {
     let chunk_index = UInt32Array::from_iter_values(chunks.iter().map(|c| c.chunk_index));
     let chunk_id: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
     let text: StringArray = chunks.iter().map(|c| Some(c.text.as_str())).collect();
@@ -101,7 +65,6 @@ fn build_columns(
         Arc::new(char_offset_start),
         Arc::new(char_offset_end),
         Arc::new(pii_metadata),
-        Arc::new(embedding),
     ]
 }
 
@@ -211,44 +174,11 @@ fn pii_fields() -> Vec<Field> {
     ]
 }
 
-/// Builds an all-null `FixedSizeList<Float32, EMBEDDING_DIM>` column for the
-/// embedding placeholder. Each row is null (populated downstream by the
-/// user's model, not by this engine).
-fn build_null_embedding(num_rows: usize) -> arrow::array::FixedSizeListArray {
-    let mut builder = FixedSizeListBuilder::new(
-        Float32Builder::new(),
-        i32::try_from(EMBEDDING_DIM).expect("EMBEDDING_DIM fits in i32"),
-    );
-    for _ in 0..num_rows {
-        for _ in 0..EMBEDDING_DIM {
-            builder.values().append_value(0.0);
-        }
-        builder.append(false);
-    }
-    builder.finish()
-}
-
-/// Builds a `FixedSizeList<Float32, dim>` column with real (non-null)
-/// embedding values from `embeddings`.
-fn build_real_embedding(embeddings: &[Vec<f32>], dim: usize) -> arrow::array::FixedSizeListArray {
-    let mut builder = FixedSizeListBuilder::new(
-        Float32Builder::new(),
-        i32::try_from(dim).expect("embedding dim fits in i32"),
-    );
-    for emb in embeddings {
-        for &val in emb {
-            builder.values().append_value(val);
-        }
-        builder.append(true); // non-null
-    }
-    builder.finish()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::arrow_io::output_schema;
-    use crate::scrub::PiiFinding;
+    use crate::pii::PiiFinding;
     use arrow::array::Array;
 
     fn sample_chunks() -> Vec<ChunkSpec> {
@@ -303,7 +233,7 @@ mod tests {
         let chunks = sample_chunks();
         let batch = chunks_to_batch(&chunks).expect("batch should build");
         assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 11);
+        assert_eq!(batch.num_columns(), 10);
         assert_eq!(batch.schema().as_ref(), output_schema().as_ref());
     }
 
@@ -359,16 +289,9 @@ mod tests {
     }
 
     #[test]
-    fn embedding_column_is_all_null() {
-        let batch = chunks_to_batch(&sample_chunks()).unwrap();
-        let col = batch.column(10);
-        assert_eq!(col.null_count(), 3);
-    }
-
-    #[test]
     fn empty_chunks_produces_empty_batch() {
         let batch = chunks_to_batch(&[]).expect("empty batch should build");
         assert_eq!(batch.num_rows(), 0);
-        assert_eq!(batch.num_columns(), 11);
+        assert_eq!(batch.num_columns(), 10);
     }
 }

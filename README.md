@@ -1,26 +1,30 @@
 # bitvanes-core
 
-Zero-trust ETL engine for AI/RAG workloads. Written in Rust, compiled to both
+Zero-trust data purification engine. Written in Rust, compiled to both
 `wasm32-unknown-unknown` (for the browser) and native targets (for the CLI).
+BitVanes directs, filters, and purifies streams of unstructured/binary data by
+stripping sensitive PII and sanitizing payloads locally — before they reach
+downstream APIs, databases, or AI models.
 
 ## What it does
 
-A four-stage pipeline that transforms raw documents into Apache Arrow
-columnar chunks ready for vector database ingestion:
+A pipeline that detects, redacts, and sanitizes PII across documents and byte
+streams, emitting clean output (and an audit log of every redaction):
 
-1. **Parse** - Markdown, HTML, plain text, JSON, or PDF into structural spans
-  with heading ancestry and section classification. PDF requires the
-  `cli-pdf` feature natively; the browser extracts PDF text via PDF.js.
-2. **Scrub** - PII redaction (email, SSN, phone, credit card, API keys)
-  via regex + Luhn validation, with an offset-delta map for projecting
-  chunk positions back to the original document.
-3. **Chunk** - BPE-aware splitting at structural boundaries using any of
-  six OpenAI tokenizers (`cl100k_base`, `o200k_base`, `r50k_base`,
-  `p50k_base`, `p50k_edit`, `o200k_harmony`), with optional overlap that
-  is preserved even across oversized spans.
-4. **Assemble** - Arrow `RecordBatch` with 9 columns (chunk_index, text,
-  token_count, source_path, heading_path, section_kind, char offsets,
-  embedding placeholder), exported via zero-copy FFI pointers.
+1. **Parse** - Markdown, HTML, plain text, JSON, PDF, or office formats into
+   structural spans with heading ancestry and section classification. PDF
+   requires the `cli-pdf` feature natively; the browser extracts PDF text via
+   PDF.js.
+2. **Scrub** - PII detection + redaction (email, SSN, phone, credit card, API
+   keys, ...) via regex + Luhn/ABA validation, with an offset-delta map for
+   projecting positions back to the original document.
+3. **Chunk** - optional BPE-aware splitting at structural boundaries using any
+   of six OpenAI tokenizers (`cl100k_base`, `o200k_base`, `r50k_base`,
+   `p50k_base`, `p50k_edit`, `o200k_harmony`), with optional overlap that is
+   preserved even across oversized spans.
+4. **Assemble** - Arrow `RecordBatch` with 10 columns (chunk_index, text,
+   token_count, source_path, heading_path, section_kind, char offsets,
+   pii_metadata), exported via zero-copy FFI pointers.
 
 ## Zero-trust guarantees
 
@@ -36,16 +40,15 @@ core/
   crates/
     core/                  bitvanes-core (pure library, no wasm-bindgen)
       src/
-        schema.rs          PipelineConfig, ChunkSpec, EmbeddingConfig
+        schema.rs          PipelineConfig, ChunkSpec, ScrubProfile
         error.rs           BitVanesError
-        parse/             markdown.rs, html.rs, text.rs
-        scrub.rs           PII redaction + OffsetMap
+        parse/             markdown.rs, html.rs, text.rs, pdf.rs, office formats
+        pii/               detect.rs (regex + Luhn/ABA + anchors), model.rs (NER trait)
+        sanitizer/         policy.rs (mask/placeholder/hash), report.rs (stats)
         tokenize.rs        BPE wrapper (tiktoken-rs)
         chunk.rs           structural-boundary chunker
         arrow_io/          batch.rs, ffi.rs, ipc.rs, csv.rs
         pipeline.rs        full pipeline orchestration (+ run_pipeline_batch)
-        embed.rs           Embedder trait (API foundation)
-        parse/pdf.rs       native PDF extractor (cli-pdf feature)
     wasm/                  bitvanes-wasm (thin #[wasm_bindgen] wrapper)
       src/lib.rs           process(), release_batch(), array_ptr(), schema_ptr()
 ```
@@ -86,9 +89,9 @@ release_batch(slotId);
 |---------|---------|-------------|
 | `ipc` | no | Arrow IPC stream output (`StreamWriter`) for CLI piping |
 | `csv` | no | Arrow CSV output for data export |
-| `embeddings` | no | On-device embedding generation via ONNX Runtime (`ort`) |
 | `parallel` | no | Rayon-based parallel batch processing (native only) |
 | `cli-pdf` | no | Native PDF text extraction via `pdf-extract` (not in wasm) |
+| `stream` | no | Async rolling-window sanitizer over `tokio::io` (text/JSON/CSV pipes) |
 
 > **Zero-telemetry is unconditional.** BPE vocab is embedded at compile time
 > by `tiktoken-rs` (`include_str!`, no network code, no feature to disable
@@ -115,7 +118,6 @@ release_batch(slotId);
 | Lever | Feature | Effect |
 |-------|---------|--------|
 | **Parallel regex sweep** | `parallel` | Rayon across PII patterns (~4–8× on 8 patterns) |
-| **Parallel embedding** | `embeddings` | Batch ONNX inference across chunks |
 | **Memory-mapped I/O** | `mmap` | Zero-copy file reads for >1 MB files |
 | **Streaming IPC output** | `ipc` | `IpcStream<W>` writes batches directly to disk/stdout |
 | **Wasm SIMD** | (always on wasm) | `target-feature=+simd128` via `.cargo/config.toml` |
@@ -127,13 +129,13 @@ cargo build --release --features "office,mmap,parallel,ipc,csv,cli-pdf"
 
 ## Output schema
 
-The Arrow `RecordBatch` emitted by `run_pipeline` has 11 columns:
+The Arrow `RecordBatch` emitted by `run_pipeline` has 10 columns:
 
 | # | Column | Type | Nullable | Description |
 |---|--------|------|----------|-------------|
 | 0 | `chunk_index` | `UInt32` | no | 0-based ordinal |
 | 1 | `chunk_id` | `Utf8` | no | Deterministic blake3 hash of chunk content |
-| 2 | `text` | `Utf8` | no | Scrubbed chunk text (ready for vector embedding) |
+| 2 | `text` | `Utf8` | no | Scrubbed (PII-redacted) chunk text |
 | 3 | `token_count` | `UInt16` | no | BPE token count of `text` |
 | 4 | `source_path` | `Utf8` | no | Source filename/label for lineage |
 | 5 | `heading_path` | `List<Utf8>` | yes | Heading ancestry (H1→H6) |
@@ -141,7 +143,6 @@ The Arrow `RecordBatch` emitted by `run_pipeline` has 11 columns:
 | 7 | `char_offset_start` | `UInt32` | no | Start offset into scrubbed text |
 | 8 | `char_offset_end` | `UInt32` | no | End offset into scrubbed text |
 | 9 | `pii_metadata` | `List<Struct>` | yes | PII findings overlapping this chunk |
-| 10 | `embedding` | `FixedSizeList<Float32, 1536>` | yes | Dense vector (populated downstream) |
 
 ### `pii_metadata` struct fields
 
@@ -168,6 +169,7 @@ Two-tier architecture with weighted-additive confidence scoring:
 | `phone` | 0.65 | — | E.164 (`+1…`) |
 | `credit_card` | 0.70 | **Luhn mod-10 gate** | Floors at 0.90 on pass; drops on fail |
 | `routing_number` | 0.55 | **ABA checksum gate** | 9-digit US bank routing |
+| `street_address` | 0.45 | — | US street address (heuristic: number + capitalized name + suffix) |
 | `aws_key` | 0.95 | — | `AKIA…` prefix |
 | `github_pat` | 0.95 | — | `ghp_…` / `gho_…` prefix |
 | `jwt` | 0.90 | — | Three base64url segments |
@@ -176,34 +178,30 @@ Each candidate's confidence is boosted by contextual anchor keywords
 (e.g. `"social security"`, `"credit card"`) found in a configurable
 ±N-word sliding window (default: 7 words, `+0.10` per hit, capped at `0.99`).
 
+> **Name detection** (e.g. personal names) is intentionally NOT a regex
+> pattern — regex name matching is too false-positive-prone to ship. It is
+> exposed via the Tier-2 `PiiDetector` trait so a local NER model can be
+> plugged in. TODO: ship a default local NER model under the `pii-model`
+> feature.
+
+## Sanitization output policies
+
+The [`sanitizer`] module decides the shape of the replacement emitted for each
+detected PII span:
+
+- `RedactionPolicy::Placeholder` — `[REDACTED_SSN]`, `[REDACTED_EMAIL]` (default).
+- `RedactionPolicy::Mask { mask_char }` — `********` (preserves match length).
+- `RedactionPolicy::Hash { hex_chars }` — `[SHA256:8f3a9c12]` (deterministic,
+  enables offline join without revealing the secret).
+
+`SanitizationStats` aggregates per-file counts (files, bytes, PII-by-type,
+throughput in MiB/s) for the CLI/daemon completion summary.
+
 **Tier 2** (stub): the `PiiDetector` trait + `ModelDetector` placeholder
 (gated behind the `pii-model` feature) provides the plug-in point for a
-future ONNX NER model. The pipeline contract is unchanged: one finding list,
-one offset map, one `pii_metadata` column.
-
-## Embeddings (native, `embeddings` feature)
-
-When the `embeddings` feature is enabled, the pipeline can generate dense
-vector embeddings for each chunk using ONNX Runtime:
-
-```rust
-use bitvanes_core::{Embedder, OrtEmbedder, run_pipeline_with_embeddings};
-use std::path::Path;
-
-let embedder = OrtEmbedder::new(
-    Path::new("models/model_quantized.onnx"),
-    Path::new("models/tokenizer.json"),
-    384,   // dimension (MiniLM-L6-v2)
-    256,   // max sequence length
-)?;
-
-let batch = run_pipeline_with_embeddings(bytes, &config, &embedder)?;
-// batch.column("embedding") now has real Float32 vectors.
-```
-
-The model file (e.g. MiniLM-L6-v2 quantized, ~22 MB) is fetched separately
-and cached. In the browser, use `@xenova/transformers` or `onnxruntime-web`
-for client-side embeddings — the Rust wasm module delegates this to JS.
+future local NER model (e.g. for names and street addresses). The pipeline
+contract is unchanged: one finding list, one offset map, one `pii_metadata`
+column.
 
 ## License
 
