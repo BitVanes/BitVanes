@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Format check
+        run: cargo fmt --all --check
+      # Compile-check EVERYTHING (incl. `embeddings`) without linking, so we
+      # catch regressions in the ONNX path. Linking the prebuilt ort static
+      # lib needs glibc >= 2.38 (C23 charconv symbols); `cargo check` skips
+      # the link step entirely.
+      - name: Compile check (all features, no link)
+        run: cargo check --workspace --all-targets --all-features
+      # Clippy + tests link test binaries, so use the feature set that does
+      # NOT pull in the native ONNX Runtime (`embeddings` is opt-in,
+      # native-only, and has no tests requiring a model).
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features cli-pdf,parallel,ipc,csv -- -D warnings
+      - name: Test
+        run: cargo test --workspace --features cli-pdf,parallel,ipc,csv
+
+  wasm:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+      - name: Build wasm
+        run: wasm-pack build crates/wasm --target web --out-dir pkg
+      - name: Assert SIMD enabled
+        run: |
+          if ! grep -q "simd128" crates/wasm/pkg/bitvanes_wasm_bg.wasm; then
+            echo "::error::simd128 target feature not found in wasm binary — check .cargo/config.toml"
+            exit 1
+          fi
+          echo "✓ simd128 feature confirmed in wasm binary"
+      - name: Check gzipped size (target <= 5 MB)
+        run: |
+          bytes=$(gzip -c crates/wasm/pkg/bitvanes_wasm_bg.wasm | wc -c)
+          echo "Gzipped wasm size: $bytes bytes"
+          if [ "$bytes" -gt 5242880 ]; then
+            echo "::error::wasm bundle exceeds 5 MB ($bytes bytes)"
+            exit 1
+          fi

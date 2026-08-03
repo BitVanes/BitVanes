@@ -1,0 +1,53 @@
+# BitVanes core - Cargo workspace manifest.
+#
+# This workspace contains two member crates:
+#   - crates/core : bitvanes-core, the pure library engine (no wasm-bindgen).
+#   - crates/wasm : bitvanes-wasm, the thin wasm-bindgen wrapper exposing the
+#                  engine to JavaScript via the Arrow C Data Interface.
+
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/wasm"]
+
+[workspace.package]
+version = "1.0.0-rc.1"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/BitVanes/core"
+homepage = "https://bitvanes.com"
+keywords = ["pii", "redaction", "privacy", "sanitization", "arrow"]
+categories = ["text-processing", "parser-implementations"]
+authors = ["BitVanes Contributors"]
+readme = "README.md"
+
+# ---------------------------------------------------------------------------
+# WASM build profile
+# ---------------------------------------------------------------------------
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# ---------------------------------------------------------------------------
+# Workspace lint policy.
+#
+# Every member crate opts in via `[lints] workspace = true`. The baseline is
+# strict (unsafe denied, pedantic warnings on) with a curated allow-list for
+# noisy lints. Ratchet the allows back toward deny as the codebase matures.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Allow-listed exceptions to pedantic/cargo.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+cargo_common_metadata = "allow"
+multiple_crate_versions = "allow"
