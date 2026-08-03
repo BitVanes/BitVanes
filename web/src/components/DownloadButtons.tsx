@@ -57,7 +57,9 @@ export default function DownloadButtons() {
         <a className="btn-primary" href={RELEASES_PAGE} target="_blank" rel="noreferrer">
           {primaryLabel}
         </a>
-        <p className="dl-foot">Browse all releases on GitHub →</p>
+        <a className="dl-foot" href={RELEASES_PAGE} target="_blank" rel="noreferrer">
+          Browse all releases on GitHub →
+        </a>
       </div>
     );
   }

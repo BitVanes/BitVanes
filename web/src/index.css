@@ -162,6 +162,8 @@ a:hover { color: var(--accent-hover); }
 
 .dl-buttons { display: flex; flex-direction: column; align-items: center; gap: 14px; margin: 28px 0 0; }
 .dl-loading { color: var(--text-dim); font-size: 14px; }
+.dl-foot { font-size: 13px; color: var(--text-dim); }
+.dl-foot:hover { color: var(--accent); }
 .dl-tag { font-size: 12px; font-weight: 500; opacity: 0.75; margin-left: 6px; }
 .dl-all-row { display: flex; gap: 14px; align-items: center; font-size: 13px; color: var(--text-dim); flex-wrap: wrap; justify-content: center; }
 .dl-all-row a { color: var(--text-muted); }
