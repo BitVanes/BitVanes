@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import Checkout from './Checkout';
 import DownloadButtons from './DownloadButtons';
 
 const REPO = 'https://github.com/BitVanes/BitVanes';
@@ -263,15 +264,11 @@ function Pricing() {
       <div className="get-started-box" id="get-started">
         <h3>Buy a key</h3>
         <p>
-          Card payments arrive via PayPal. AI agents can pay directly with USDC
-          over the x402 protocol — see <a href="#agents">For agents</a>.
+          Pay by card via PayPal (the key is emailed to you instantly). AI
+          agents can also pay directly with USDC over x402 — see{' '}
+          <a href="#agents">For agents</a>.
         </p>
-        <div className="get-started-cta">
-          <a className="btn-primary" href={RELEASES}>
-            Download BitVanes first
-          </a>
-          <code>bitvanes config --key BV-…</code> to activate
-        </div>
+        <Checkout />
       </div>
     </section>
   );

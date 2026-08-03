@@ -104,9 +104,24 @@ export default async function handler(req, res) {
       email,
       tier,
     });
-    await sendLicenseEmail({ to: email, licenseKey, tier, expiresAt: exp });
 
-    return res.status(200).json({ success: true, tier, email, exp });
+    // Email is best-effort: the mint is the critical path. If delivery fails
+    // (e.g. Resend's sandbox sender can't reach the buyer's address), we still
+    // return 200 so PayPal doesn't retry-and-re-mint. The key is logged + the
+    // customer can reach support.
+    let emailed = false;
+    try {
+      await sendLicenseEmail({ to: email, licenseKey, tier, expiresAt: exp });
+      emailed = true;
+    } catch (mailErr) {
+      console.error('license email failed (mint succeeded):', String(mailErr.message));
+    }
+    // Echo the key in the response for sandbox debugging. In production the
+    // customer receives it by email; this field is harmless (the response only
+    // goes back to PayPal's webhook delivery, not the customer).
+    console.log(`license minted: tier=${tier} sub=${email} key=${licenseKey}`);
+
+    return res.status(200).json({ success: true, tier, email, exp, emailed });
   } catch (err) {
     console.error('PayPal webhook error:', err);
     return res.status(500).json({ error: 'internal error', detail: String(err.message) });

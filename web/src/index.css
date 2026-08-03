@@ -178,6 +178,30 @@ a:hover { color: var(--accent-hover); }
 .dl-unsigned-note { font-size: 12px; color: var(--text-dim); line-height: 1.55; }
 .dl-unsigned-note code { font-size: 11.5px; }
 
+/* ── Checkout (PayPal) ──────────────────── */
+
+.checkout { display: flex; flex-direction: column; gap: 10px; text-align: left; max-width: 460px; margin: 16px auto 0; }
+.checkout label { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.checkout input[type='email'] {
+  width: 100%; padding: 11px 14px; font-size: 14px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-family: var(--sans);
+}
+.checkout input[type='email']:focus { outline: none; border-color: var(--accent); }
+.checkout-hint { font-size: 12px; color: var(--text-dim); }
+.checkout-error { color: var(--danger); font-size: 14px; }
+.checkout-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 6px; }
+@media (max-width: 560px) { .checkout-buttons { grid-template-columns: 1fr; } }
+.checkout-tier { min-width: 0; }
+.checkout-tier-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font-size: 14px; color: var(--text-muted); }
+.checkout-tier-head strong { color: var(--text); font-size: 15px; }
+.checkout-sandbox { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.checkout-sandbox code { font-size: 11.5px; }
+.checkout-success { text-align: center; padding: 12px; }
+.checkout-success h4 { font-size: 18px; margin-bottom: 8px; }
+.checkout-success p { color: var(--text-muted); font-size: 14px; margin-bottom: 10px; line-height: 1.6; }
+.checkout-instr code { font-size: 12px; word-break: break-all; }
+
 /* ── Section headings ───────────────────── */
 
 section h2 {
