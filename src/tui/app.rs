@@ -7,10 +7,10 @@ use std::sync::mpsc::{self, Receiver};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use bitvanes_core::{
-    ChunkSpec, PipelineConfig, chunk::chunk_document, parse::parse_bytes, scrub::scrub_document,
+    ChunkSpec, PipelineConfig, chunk::chunk_document, parse::parse_bytes, pii::scrub_document,
 };
 
-use crate::Cli;
+use super::TuiArgs;
 
 /// Which screen is currently displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,13 +62,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(cli: &Cli) -> Self {
+    pub fn new(cli: &TuiArgs) -> Self {
         let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         // Wire CLI flags / config file into the pipeline config so the TUI
         // honours `--format`, `--tokenizer`, `--max-tokens`, `--scrub`,
         // and `--config` just like headless mode.
-        let (config, status) = match crate::headless::build_config(cli) {
+        let (config, status) = match super::build_config(cli) {
             Ok(c) => (c, None),
             Err(e) => (
                 PipelineConfig::default(),
@@ -388,7 +388,7 @@ impl AppState {
             self.status = Some(Status::Error("nothing to save — no chunks".to_string()));
             return;
         }
-        match crate::headless::write_output(&self.chunks, &self.output_path) {
+        match super::write_output(&self.chunks, &self.output_path) {
             Ok(()) => {
                 self.status = Some(Status::Success(format!(
                     "Saved {} chunks to {}",
@@ -444,10 +444,10 @@ fn run_pipeline_for_files(paths: &[PathBuf], base_config: &PipelineConfig) -> Pr
             source_label: Some(path.display().to_string()),
             ..base_config.clone()
         };
-        let cfg = crate::headless::infer_format(path, cfg);
+        let cfg = super::infer_format(path, cfg);
 
         match parse_bytes(&bytes, &cfg)
-            .and_then(|doc| scrub_document(doc, &cfg.scrub).map(|(d, _)| d))
+            .and_then(|doc| scrub_document(doc, &cfg.scrub).map(|(d, _, _)| d))
             .and_then(|doc| chunk_document(&doc, &cfg.chunk, cfg.source_label.as_deref()))
         {
             Ok(c) => chunks.extend(c),
@@ -466,13 +466,15 @@ fn run_pipeline_for_files(paths: &[PathBuf], base_config: &PipelineConfig) -> Pr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Cli;
     use clap::Parser;
 
-    fn cli_with(args: &[&str]) -> Cli {
-        let mut full = vec!["bitvanes"];
+    fn cli_with(args: &[&str]) -> TuiArgs {
+        let mut full = vec!["bitvanes", "tui"];
         full.extend_from_slice(args);
-        Cli::parse_from(full)
+        match crate::Cli::parse_from(full).command {
+            Some(crate::Command::Tui(a)) => a,
+            other => panic!("expected `tui` subcommand, got {other:?}"),
+        }
     }
 
     fn write_temp_file(content: &str, ext: &str) -> PathBuf {
@@ -530,9 +532,10 @@ mod tests {
 
     #[test]
     fn save_writes_json_and_reports_success() {
-        let mut app = AppState::new(&cli_with(&["--no-tui"]));
+        let mut app = AppState::new(&cli_with(&[]));
         app.chunks = vec![ChunkSpec {
             chunk_index: 0,
+            chunk_id: String::new(),
             text: "sample".to_string(),
             token_count: 1,
             source_path: "t.md".to_string(),
@@ -540,6 +543,7 @@ mod tests {
             section_kind: bitvanes_core::SectionKind::Paragraph,
             char_offset_start: 0,
             char_offset_end: 6,
+            pii: vec![],
         }];
         let out = format!(
             "/tmp/bitvanes-save-{}.json",

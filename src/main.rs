@@ -1,87 +1,70 @@
-//! `bitvanes` — zero-trust ETL for AI/RAG.
+//! `bitvanes` — zero-trust local PII purification.
 //!
-//! Processes documents into BPE-aware chunks with structural context,
-//! outputting Apache Arrow IPC, CSV, or JSON. Runs the same pipeline
-//! as the web app, natively.
+//! Subcommands:
+//! - `scrub`  : batch-sanitize a file or directory (detect/redact PII + stats).
+//! - `filter` : stream stdin → stdout, redacting PII in flight.
+//! - `daemon` : local HTTP daemon (127.0.0.1 only) for the dashboard / API.
+//! - `tui`    : interactive terminal UI.
 
-mod headless;
+mod daemon;
+mod filter;
+mod scrub;
+mod shared;
 mod tui;
 
-use clap::{CommandFactory, Parser};
-use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// Zero-trust ETL for AI/RAG — chunk documents for vector databases.
+use clap::{CommandFactory, Parser, Subcommand};
+
+/// Zero-trust local PII purification. Direct, filter, and purify data streams
+/// before they reach downstream systems — 100% on-premise, zero cloud uploads.
 #[derive(Parser)]
 #[command(
     name = "bitvanes",
     version,
-    about = "Zero-trust document chunking for RAG",
-    long_about = "Processes documents into BPE-aware chunks with structural context.\n\
-                  Output formats: Arrow IPC (.arrow), CSV (.csv), JSON (.json).\n\
-                  Supports profile replay from the web app."
+    propagate_version = true,
+    long_about = None,
 )]
-struct Cli {
-    /// Input file or directory (recursive scan).
-    #[arg(short, long, value_name = "PATH")]
-    input: Option<PathBuf>,
+pub(crate) struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
 
-    /// Pipeline profile JSON (exported from the web app).
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
-
-    /// Headless mode — no TUI, just process and output. (Default if --input is given.)
-    #[arg(long)]
-    no_tui: bool,
-
-    /// Document format. Inferred from file extension if omitted.
-    #[arg(short, long, value_name = "FORMAT")]
-    format: Option<String>,
-
-    /// BPE tokenizer for chunk boundary calculation.
-    #[arg(short, long, value_name = "NAME")]
-    tokenizer: Option<String>,
-
-    /// Maximum tokens per chunk.
-    #[arg(short = 'm', long, value_name = "N")]
-    max_tokens: Option<u32>,
-
-    /// PII patterns to scrub (comma-separated). E.g. "email,ssn,credit_card".
-    #[arg(long, value_name = "PATTERNS")]
-    scrub: Option<String>,
-
-    /// Output file. Supports .arrow, .csv, .json extensions.
-    /// Use "-" for stdout (JSON only).
-    #[arg(short, long, value_name = "FILE")]
-    output: Option<String>,
+#[derive(Debug, Clone, Subcommand)]
+pub(crate) enum Command {
+    /// Batch-sanitize a file or directory: detect/redact PII, write clean
+    /// output, and print a categorized stats summary.
+    Scrub(scrub::ScrubArgs),
+    /// Filter a byte stream on stdin → stdout (e.g. `cat f.json | bitvanes filter`).
+    Filter(filter::FilterArgs),
+    /// Run a local HTTP daemon on 127.0.0.1 for the dashboard / API.
+    Daemon(daemon::DaemonArgs),
+    /// Interactive terminal UI (file browser + config editor + results).
+    Tui(tui::TuiArgs),
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-
-    // If --input is provided, run headless. Otherwise launch the TUI.
-    if cli.input.is_some() || cli.no_tui {
-        if cli.input.is_none() {
-            // `--no-tui` without an input has nothing to do; show help
-            // instead of failing with a confusing "no input" error.
+    match cli.command {
+        Some(Command::Scrub(args)) => exit(scrub::run(args)),
+        Some(Command::Filter(args)) => exit(filter::run(args)),
+        Some(Command::Daemon(args)) => exit(daemon::run(args)),
+        Some(Command::Tui(args)) => exit(tui::run(&args).map_err(Box::from)),
+        None => {
+            // No subcommand: print help and exit success.
             let _ = Cli::command().print_help();
             println!();
-            return ExitCode::SUCCESS;
+            ExitCode::SUCCESS
         }
-        match headless::run(&cli) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                ExitCode::FAILURE
-            }
-        }
-    } else {
-        match tui::run(&cli) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                ExitCode::FAILURE
-            }
+    }
+}
+
+fn exit(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            ExitCode::FAILURE
         }
     }
 }

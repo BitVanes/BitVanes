@@ -1,13 +1,13 @@
 [package]
 name = "bitvanes-cli"
-version = "0.1.1"
+version = "1.0.0-rc.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-description = "Terminal ETL tool for BitVanes — zero-trust document chunking for RAG"
+description = "BitVanes CLI — zero-trust local PII purification (scrub, filter, daemon)."
 repository = "https://github.com/BitVanes/cli"
 homepage = "https://bitvanes.com"
-keywords = ["etl", "rag", "ai", "chunking", "arrow"]
+keywords = ["pii", "redaction", "privacy", "sanitization", "cli"]
 categories = ["command-line-utilities", "text-processing"]
 readme = "README.md"
 
@@ -15,19 +15,33 @@ readme = "README.md"
 name = "bitvanes"
 path = "src/main.rs"
 
+[features]
+# Compile-time embedding of the built web dashboard (../../web/dist). Releases
+# enable this so `bitvanes daemon` serves the dashboard with no --dashboard-dir.
+default = []
+dashboard = ["dep:rust-embed"]
+
 [dependencies]
-bitvanes-core = { git = "https://github.com/BitVanes/core.git", tag = "v0.1.1", features = ["ipc", "csv", "cli-pdf", "parallel"] }
+# TODO(phase-9): restore the git-tag dependency once core is re-tagged after the
+# purification rebrand. Local path during the refactor so core/cli move together.
+bitvanes-core = { path = "../core/crates/core", features = ["ipc", "csv", "cli-pdf", "parallel", "office", "mmap", "stream", "config", "pdf-redact"] }
+axum = "0.7"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
+indicatif = "0.17"
 ratatui = "0.29"
 rayon = "1"
-walkdir = "2"
+rust-embed = { version = "8", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-indicatif = "0.17"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tower-http = { version = "0.5", features = ["fs"] }
+walkdir = "2"
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
+panic = "abort"
 strip = true

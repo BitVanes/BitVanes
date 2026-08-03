@@ -1,8 +1,16 @@
 # bitvanes-cli
 
-Terminal ETL tool for [BitVanes](https://bitvanes.com) — zero-trust document
-chunking for RAG. Runs the same pipeline as the web app, natively. Features
-both an interactive TUI (ratatui) and headless mode (CI/CD piping).
+Terminal tool for [BitVanes](https://bitvanes.com) — zero-trust local PII
+purification. Direct, filter, and sanitize document streams before they reach
+downstream APIs, databases, or AI tools. 100% on-premise; the engine makes no
+network calls.
+
+Four subcommands:
+
+- **`scrub`** — batch-sanitize a file or directory (detect/redact PII + stats).
+- **`filter`** — stream `stdin` → `stdout`, redacting PII in flight.
+- **`daemon`** — local HTTP daemon on `127.0.0.1` for the dashboard / API.
+- **`tui`** — interactive terminal UI.
 
 ## Install
 
@@ -18,127 +26,117 @@ Download the latest binary from
 [GitHub Releases](https://github.com/BitVanes/cli/releases):
 
 ```bash
-# Linux/macOS
-curl -L https://github.com/BitVanes/cli/releases/latest/download/bitvanes-v0.1.0-x86_64-linux.tar.gz | tar xz
+curl -L https://github.com/BitVanes/cli/releases/latest/download/bitvanes-x86_64-linux.tar.gz | tar xz
 sudo mv bitvanes /usr/local/bin/
-
-# Verify
 bitvanes --version
 ```
 
 ## Usage
 
-### Process a file or directory
+### Batch-sanitize a directory
 
 ```bash
-# Single file → JSON output
-bitvanes -i document.md -o chunks.json
+# Sanitize every supported file under ./raw-documents/, mirror tree to ./clean/
+bitvanes scrub ./raw-documents/ --out ./clean-documents/ --rules email,ssn,credit_card,street_address
 
-# Directory (recursive) → Arrow IPC
-bitvanes -i ./docs/ -f markdown -m 512 -o chunks.arrow
-
-# Multiple PII patterns
-bitvanes -i ./docs/ --scrub email,ssn,credit_card -o chunks.csv
+# Single file → stdout
+bitvanes scrub report.pdf --out - --rules email,ssn --redact mask
 ```
 
-### Interactive TUI mode
-
-Run `bitvanes` with no arguments to launch the terminal UI:
+`scrub` prints a categorized summary on stderr:
 
 ```
-bitvanes
+BitVanes sanitization complete
+  Files processed:    42
+  Total bytes:        18,402,113
+  PII instances:      318
+  By category:
+               email: 187
+                 ssn: 64
+        credit_card: 41
+      street_address: 26
+  Throughput:         142.7 MiB/s
 ```
 
-Four screens (press `?` anywhere for full keybinds):
-1. **File Browser** — navigate directories, select files with Space
-2. **Config** — adjust format, tokenizer, max tokens, PII patterns
-3. **Results** — scrollable chunk preview table with stats; save to a path
-4. **Help** — full keybind reference
+`--redact` selects the output style: `placeholder` (default: `[REDACTED_SSN]`),
+`mask` (`***********`), or `hash` (`[SHA256:8f3a9c12]`).
 
-Keybinds:
-- `↑↓` / `jk` — navigate / scroll
-- `Enter` — open directory / toggle selection / process
-- `Space` — select file
-- `Tab` — cycle screens (Browser → Config → Results)
-- `m` — cycle max tokens (128 → 256 → 512 → 1024)
-- `t` — cycle tokenizer
-- `e/s/a` — toggle email/ssn/aws PII scrubbing (Config screen)
-- `s` — **save** chunks to the output path (Results screen)
-- `e` — **edit** the output path; type a new name, `Enter` confirms, `Esc` cancels.
-  Output format is inferred from the extension: `.json` (default), `.csv`, `.arrow`
-- `b` — back to file browser
-- `?` — toggle help
-- `q` / `Esc` — quit
-
-Processing runs on a background thread, so the UI stays responsive on large
-files (a spinner shows progress). CLI flags (`--format`, `--max-tokens`,
-`--tokenizer`, `--scrub`, `--config`) are honoured when launching the TUI.
-
-### Profile replay (from web app)
-
-Export a profile from the BitVanes web app, then replay it identically:
+### Filter a stream
 
 ```bash
-bitvanes -c profile.json -i ./documents/ -o output.arrow
+cat sensitive-stream.json | bitvanes filter --rules email,ssn,credit_card --mask-char "*" > clean.json
 ```
 
-### Unix piping
+`filter` is bounded-memory: a rolling match window (default 1024 bytes) so a PII
+token split across a read boundary is still redacted.
+
+### Run the local daemon
 
 ```bash
-cat doc.md | bitvanes -f markdown -m 256 -o - | python process.py
+bitvanes daemon --port 8080 --rules email,ssn,credit_card,phone,street_address
+# optionally serve the built web dashboard:
+bitvanes daemon --port 8080 --config Bitvanes.toml --dashboard-dir ../web/dist
 ```
 
-### All options
+The daemon binds to **127.0.0.1 only** (never `0.0.0.0`). Endpoints:
 
-```
-bitvanes [OPTIONS]
+| Method | Path       | Body / Result                                 |
+|--------|------------|-----------------------------------------------|
+| GET    | `/health`  | → `ok`                                        |
+| POST   | `/filter`  | request body (text) → sanitized text          |
 
-Input:
-  -i, --input <PATH>         File or directory (recursive scan)
-  -c, --config <FILE>        Profile JSON from web export
-      --no-tui               Headless mode
+> TODO(phase-6-followup): `/scrub` multipart upload, embedded dashboard assets
+> via `rust-embed`, and request audit logging.
 
-Pipeline:
-  -f, --format <FORMAT>      markdown | text | html | json | pdf (auto-detected)
-  -t, --tokenizer <NAME>     cl100k_base | o200k_base | r50k_base | ...
-  -m, --max-tokens <N>       Max tokens per chunk
-      --scrub <PATTERNS>     Comma-separated PII patterns
+### Interactive TUI
 
-Output:
-  -o, --output <FILE>        .arrow | .csv | .json | - (stdout)
+```bash
+bitvanes tui
 ```
 
-## Output formats
+Press `?` inside the TUI for full keybinds (file browser → config → results).
 
-| Format | Extension | Use case |
-|--------|-----------|----------|
-| Arrow IPC | `.arrow` | DuckDB / Polars / LanceDB direct ingestion |
-| CSV | `.csv` | Spreadsheet import, human inspection |
-| JSON | `.json` | Python / Node RAG pipelines |
+## Configuration (`Bitvanes.toml`)
+
+```toml
+[pii]
+patterns = ["email", "ssn", "credit_card", "street_address"]
+min_confidence = 0.5
+anchor_window = 7
+report_only = ["phone"]
+
+[[pii.custom]]
+name = "project_id"
+regex = "\\bPROJECT-\\d+\\b"
+replacement = "[PROJECT-ID]"
+
+[output]
+redaction = "placeholder"   # placeholder | mask | hash
+mask_char = "*"
+hash_hex_chars = 8
+```
+
+Pass it to any subcommand with `-c`/`--config Bitvanes.toml`.
+
+## Output styles
+
+| Style         | Example            | Notes                                  |
+|---------------|--------------------|----------------------------------------|
+| `placeholder` | `[REDACTED_SSN]`   | Default; typed per entity.             |
+| `mask`        | `***********`      | Preserves match length.                |
+| `hash`        | `[SHA256:8f3a9c12]`| Deterministic; enables offline joins.  |
+
+## Built-in PII rules
+
+`email`, `ssn`, `phone` (E.164), `credit_card` (Luhn), `routing_number` (ABA),
+`street_address`, `aws_key`, `github_pat`, `jwt`. (Name detection requires a
+local NER model — tracked under the `pii-model` feature.)
 
 ## Supported document formats
 
-| Format | Extensions | Parser |
-|--------|------------|--------|
-| Markdown | `.md` | `pulldown-cmark` |
-| Text | `.txt` | Paragraph-based splitting |
-| HTML | `.html` | `scraper` (html5ever) |
-| JSON | `.json` | Structural (one chunk per object/leaf) |
-| PDF | `.pdf` | `pdf-extract` (native, text-layer only) |
-
-Format is auto-detected from file extension. Override with `--format`.
-Scanned/image-only PDFs have no extractable text layer and are reported
-as invalid input (OCR is out of scope; the web app uses PDF.js).
-
-## Features
-
-- **6 OpenAI tokenizers**: cl100k_base, o200k_base, r50k_base, p50k_base,
-  p50k_edit, o200k_harmony (all embedded at compile time)
-- **7 PII patterns**: email, SSN, phone, credit card (Luhn), AWS keys,
-  GitHub PATs, JWTs
-- **Structural context**: heading ancestry preserved per chunk
-- **Parallel processing**: rayon multi-core for directory batch processing
-- **Profile replay**: byte-for-byte identical output to the web app
+Markdown, plain text, HTML, JSON, PDF, DOCX, PPTX, XLSX, EPUB, RTF. Format is
+auto-detected from the file extension. Scanned/image-only PDFs have no
+extractable text layer and are reported as invalid input.
 
 ## Build from source
 
@@ -149,10 +147,9 @@ cargo build --release
 ./target/release/bitvanes --help
 ```
 
-The CLI depends on [`bitvanes-core`](https://github.com/BitVanes/core) via a
-git dependency (tag `v0.1.1`, with the `ipc`, `csv`, `cli-pdf`, and
-`parallel` features). No manual checkout of the core repo needed.
+The CLI depends on [`bitvanes-core`](https://github.com/BitVanes/core) (path
+dependency during the rebrand; restored to a git tag in releases).
 
 ## License
 
-MIT OR Apache-2.0
+MIT OR Apache-2.0.

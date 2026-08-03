@@ -6,57 +6,52 @@ Build commands for the `bitvanes-cli` crate.
 
 ```bash
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo build --release
 ```
 
-## Smoke test
+## Smoke tests
 
 ```bash
-echo '# Test\nHello world.' > /tmp/test.md
-./target/release/bitvanes -i /tmp/test.md -f markdown -o /tmp/out.json
-cat /tmp/out.json
+# scrub a single file (placeholder policy)
+printf 'mail alice@example.com or 123-45-6789\n' > /tmp/t.txt
+./target/release/bitvanes scrub /tmp/t.txt --out - --rules email,ssn
+
+# filter a stream (mask policy)
+cat /tmp/t.txt | ./target/release/bitvanes filter --rules email,ssn --mask-char '#'
+
+# daemon health + filter
+./target/release/bitvanes daemon --port 8080 --rules email &
+curl -s http://127.0.0.1:8080/health
+printf 'reach bob@evil.io' | curl -s --data-binary @- http://127.0.0.1:8080/filter
+kill %1
 ```
 
 ## Architecture
 
-Headless CLI that links `bitvanes-core` via git dependency (tag `v0.1.0`).
+Subcommand-based CLI (`scrub` / `filter` / `daemon` / `tui`) in `src/main.rs`.
 
-Entry point: `src/main.rs` (clap arg parsing → dispatch to headless or TUI).
-Headless: `src/headless.rs` (directory scan → rayon parallel → output).
-TUI: `src/tui/` (app state, event polling, ratatui rendering).
+- `src/scrub.rs`   — batch sanitize (parse → detect → redact → write + stats).
+- `src/filter.rs`  — async stdin→stdout via core's `StreamSanitizer` (tokio).
+- `src/daemon.rs`  — axum HTTP daemon, **127.0.0.1 only**, `/health` + `/filter`.
+- `src/shared.rs`  — `Bitvanes.toml` loading, rule parsing, format inference.
+- `src/tui/`       — interactive ratatui UI (retained from the original product).
 
-The four-stage pipeline runs inside `bitvanes-core`:
-`parse → scrub → chunk → RecordBatch`.
-
-Output formats: Arrow IPC, CSV, JSON (all from `bitvanes-core`'s `arrow_io`).
+The PII detection/redaction runs inside `bitvanes-core`:
+`pii::Scrubber` detects, `sanitizer` applies the output policy + `StreamSanitizer`
+streams, `config::BitvanesConfig` parses `Bitvanes.toml`.
 
 ## Dependency on core
 
 ```toml
-bitvanes-core = { git = "https://github.com/BitVanes/core.git", tag = "v0.1.1", features = ["ipc", "csv", "cli-pdf", "parallel"] }
+bitvanes-core = { path = "../core/crates/core", features = ["ipc","csv","cli-pdf","parallel","office","mmap","stream","config","pdf-redact"] }
 ```
 
-The CLI is distributed as a prebuilt binary via GitHub Releases (not published
-to crates.io), so it links core via a git tag. Only `bitvanes-core` is
-published to crates.io. To bump the core version, update the tag here and in
-Cargo.toml.
-
-## Release
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The release workflow (.github/workflows/release.yml) builds binaries for:
-- x86_64 Linux
-- aarch64 + x86_64 macOS
-- x86_64 Windows
-
-And creates a GitHub Release with download links + SHA256 checksums.
+> TODO(phase-9): restore the git-tag dependency once core is re-tagged after the
+> purification rebrand. The CLI is distributed as a prebuilt binary via GitHub
+> Releases and links core via a git tag in published releases.
 
 ## Toolchain
 
-- Rust stable (1.95+), pinned via `rust-toolchain.toml`.
-- No wasm target needed — this is a native binary only.
+- Rust stable (edition 2024), MSRV 1.85.
+- Native binary only (no wasm target).

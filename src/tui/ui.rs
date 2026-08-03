@@ -49,7 +49,7 @@ fn draw_title_bar(f: &mut Frame, area: Rect) {
         ),
         Span::raw("│ "),
         Span::styled(
-            "Zero-Trust ETL for RAG",
+            "Zero-Trust PII Purification",
             Style::default().fg(Color::DarkGray),
         ),
     ]))
