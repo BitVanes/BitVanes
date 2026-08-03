@@ -5,8 +5,8 @@ isolation are core design properties, not add-ons.
 
 ## Zero-telemetry guarantee
 
-- BPE vocab files are compiled in at build time by `tiktoken-rs` via
-  `include_str!`. The dependency contains **no network code**. No
+- Token counting is a pure-arithmetic **chars-per-token heuristic** — there is
+  no tokenizer model, no vocab file, and **no network code**. No
   tokenization request ever leaves the process.
 - The pipeline makes **no network calls** during parse, scrub, chunk, or
   Arrow assembly.
@@ -28,8 +28,8 @@ Only the most recent minor release receives security fixes.
 
 | Version | Supported |
 |---------|-----------|
-| 0.5.x   | ✅        |
-| < 0.5   | ❌        |
+| 1.0.x   | ✅        |
+| < 1.0   | ❌        |
 
 ## PII scrubbing scope
 
@@ -39,6 +39,13 @@ pre-tokenization so matches cannot be split across chunk boundaries, but
 recall depends on input formatting (e.g., phone matching is E.164-only). Do
 not rely on it as the sole control for regulated data.
 
-> TODO(phase-4): destructive PDF redaction (content-stream removal / page
-> flattening) is tracked under the purification rebrand. Until it lands, PDF
-> output is text-layer only.
+## PDF redaction
+
+`--pdf-mode redact` deletes PII text objects from the page-object tree and
+draws a blackout; `--pdf-mode flatten` rasterizes the page to 300 DPI and drops
+the text layer entirely. Both require a runtime `libpdfium`; if it is absent
+the engine **fails closed** (`FeatureNotEnabled`) rather than emitting an
+unredacted PDF. `--pdf-mode text-only` extracts and redacts text without
+pdfium (no original PDF bytes are preserved on that path). Scanned/image-only
+PDFs have no extractable text layer and are reported as invalid input (OCR is
+out of scope).

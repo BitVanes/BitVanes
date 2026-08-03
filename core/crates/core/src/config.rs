@@ -65,6 +65,15 @@ pub struct PiiSection {
     /// Entity slugs to detect but not redact (report-only).
     #[serde(default)]
     pub report_only: Vec<String>,
+    /// Personal-name gazetteer: phrases matched case-insensitively on word
+    /// boundaries (e.g. `["Jane Doe", "Akhmad"]`). The customer supplies the
+    /// names relevant to their corpus.
+    #[serde(default)]
+    pub names: Vec<String>,
+    /// Layer the bundled common-given-name starter list on top of `names`.
+    /// Off by default (generic names are FP-prone on general prose).
+    #[serde(default)]
+    pub use_generic_names: bool,
 }
 
 /// A `[[pii.custom]]` user regex rule.
@@ -157,6 +166,8 @@ impl BitvanesConfig {
             anchor_window: self.pii.anchor_window.unwrap_or(7),
             min_confidence: self.pii.min_confidence,
             report_only: self.pii.report_only.clone(),
+            names: self.pii.names.clone(),
+            use_generic_names: self.pii.use_generic_names,
         })
     }
 

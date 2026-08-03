@@ -84,26 +84,28 @@ pub enum DocumentFormat {
     Rtf,
 }
 
-/// Which BPE tokenizer to apply when computing chunk boundaries.
+/// Which tokenizer kind a config requested.
 ///
-/// All vocab files are embedded at compile time by `tiktoken-rs` — no
-/// network calls ever occur. See the `tiktoken-rs` crate for model mapping
-/// details.
+/// All variants now resolve to the same **chars-per-token heuristic
+/// estimator** (see `tokenize`). The `tokenizer` field is retained on
+/// [`ChunkConfig`](crate::schema::ChunkConfig) for wire-format compatibility
+/// with existing `Bitvanes.toml` / profile JSON; it no longer selects a real
+/// BPE backend (the `tiktoken-rs` dependency was removed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenizerKind {
-    /// GPT-3.5 / GPT-4 tokenizer (`cl100k_base`).
+    /// Default heuristic selector (`cl100k_base` shape, retained for compat).
     #[default]
     Cl100kBase,
-    /// GPT-5 / GPT-4.1 / GPT-4o tokenizer (`o200k_base`).
+    /// Retained for compat (`o200k_base` shape).
     O200kBase,
-    /// GPT-3 / `davinci` tokenizer (`r50k_base`, also known as `gpt2`).
+    /// Retained for compat (`r50k_base` shape).
     R50kBase,
-    /// Code models / `text-davinci-002` / `text-davinci-003` (`p50k_base`).
+    /// Retained for compat (`p50k_base` shape).
     P50kBase,
-    /// Edit models / `text-davinci-edit-001` (`p50k_edit`).
+    /// Retained for compat (`p50k_edit` shape).
     P50kEdit,
-    /// `gpt-oss` models / `gpt-oss-20b` / `gpt-oss-120b` (`o200k_harmony`).
+    /// Retained for compat (`o200k_harmony` shape).
     O200kHarmony,
 }
 
@@ -203,6 +205,25 @@ pub struct ScrubProfile {
     /// reported, but the text is not masked.
     #[serde(default)]
     pub report_only: Vec<String>,
+
+    /// Personal-name gazetteer (Tier-2 detection). Each entry is matched
+    /// case-insensitively as a whole phrase on word boundaries (e.g.
+    /// `["Jane Doe", "Akhmad"]`). Multi-token names score higher than single
+    /// tokens. This is far more precise than regex name heuristics, at the
+    /// cost of requiring the customer to supply the names relevant to their
+    /// corpus — name detection is inherently domain-specific. Combine with
+    /// [`Self::use_generic_names`] to layer a bundled common-name starter
+    /// list. Default empty.
+    #[serde(default)]
+    pub names: Vec<String>,
+
+    /// Layer a small bundled list of common given names (see
+    /// `GENERIC_GIVEN_NAMES` in `pii::detect`) on top of `names`. Off by
+    /// default — generic names are false-positive-prone on general prose
+    /// (e.g. place / activity words). Enable for bulk people-record scrubbing
+    /// where recall matters more than precision.
+    #[serde(default)]
+    pub use_generic_names: bool,
 }
 
 /// Default anchor half-window in words (the spec's recommended value).
@@ -219,6 +240,8 @@ impl Default for ScrubProfile {
             anchor_window: default_anchor_window(),
             min_confidence: 0.0,
             report_only: Vec::new(),
+            names: Vec::new(),
+            use_generic_names: false,
         }
     }
 }

@@ -91,7 +91,13 @@ pub fn run(args: ScrubArgs) -> Result<(), Box<dyn std::error::Error>> {
         match sanitize_bytes(&bytes, path, &cfg, &resolved, &policy, pdf_mode) {
             Ok(Sanitized::Text(text, findings)) => {
                 stats.record_file(bytes.len() as u64, &findings);
-                write_output(&Sanitized::Text(text, findings), path, &args.input, out_target, mirror)?;
+                write_output(
+                    &Sanitized::Text(text, findings),
+                    path,
+                    &args.input,
+                    out_target,
+                    mirror,
+                )?;
             }
             Ok(Sanitized::Pdf(pdf_bytes, matches_scrubbed)) => {
                 stats.record_pdf_file(bytes.len() as u64, matches_scrubbed);

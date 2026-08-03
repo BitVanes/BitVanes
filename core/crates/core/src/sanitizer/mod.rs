@@ -35,7 +35,7 @@ pub use report::{CategoryCount, SanitizationStats};
 pub use stream::{DEFAULT_MAX_MATCH_LEN, StreamSanitizer};
 
 #[cfg(feature = "pdf-redact")]
-pub use pdf::{PdfSanitizationResult, redact_pdf_blackout, sanitize_pdf_text};
+pub use pdf::{PdfSanitizationResult, sanitize_pdf_text};
 
 #[cfg(feature = "pdf-redact")]
 pub use pdfium::{PdfRedactMode, PdfSanitizeResult as PdfiumSanitizeResult, redact_pdf};

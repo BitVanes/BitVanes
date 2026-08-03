@@ -1,26 +1,43 @@
-//! BPE tokenization via `tiktoken-rs`.
+//! Token counting and token-boundary splitting for the chunker.
 //!
-//! Provides token counting and token-boundary-aware splitting for the
-//! chunker. Both `cl100k_base` (GPT-4/3.5) and `o200k_base` (GPT-4o) are
-//! supported, selected by [`TokenizerKind`].
+//! # Heuristic estimator (no BPE dependency)
+//!
+//! Token counts are approximated at **≈ 4 characters per token** — the
+//! documented `OpenAI` rule of thumb for GPT-4 / GPT-4o English + code text.
+//! This removes the heavy `tiktoken-rs` dependency (which embedded
+//! multi-MB vocab files via `include_str!`) while keeping the chunker's
+//! `max_tokens` budgeting behaviorally identical.
+//!
+//! The estimate is intentionally **conservative for chunk sizing**, not a
+//! substitute for exact BPE counts: it exists so the chunker can pack spans
+//! to a roughly-even size without pulling in a tokenizer runtime. If exact
+//! invoice-grade token counts are needed, re-count the output with the
+//! tokenizer of your downstream model.
+//!
+//! `TokenizerKind` is retained on [`ChunkConfig`](crate::schema::ChunkConfig)
+//! for wire-format compatibility with existing `Bitvanes.toml` / profile JSON,
+//! but every variant now resolves to the same heuristic.
 //!
 //! # Zero-telemetry
 //!
-//! The vocab files are compiled in at build time by `tiktoken-rs` itself
-//! via `include_str!`. That crate contains no network code, so
-//! zero-telemetry is unconditional in every build — it is not gated by a
-//! cargo feature.
+//! There is no tokenizer model, no vocab file, and no network code. The
+//! estimator is pure arithmetic over the input string.
 
-use tiktoken_rs::CoreBPE;
-
-use crate::error::{BitVanesError, Result};
+use crate::error::Result;
 use crate::schema::TokenizerKind;
 
-/// A compiled BPE tokenizer. Wraps a `&'static CoreBPE` singleton (cheap
-/// to construct; the singleton is initialized once on first use).
+/// Approximate characters per token (`OpenAI`'s documented average for
+/// English + code text under GPT-4 / GPT-4o BPE).
+const CHARS_PER_TOKEN: usize = 4;
+
+/// A token counter / boundary splitter. Stateless beyond the (now
+/// informational) [`TokenizerKind`].
+///
+/// Construct with [`Tokenizer::new`]; use [`Tokenizer::count`] for sizing and
+/// [`Tokenizer::split_at_token_boundary`] / [`Tokenizer::suffix_tokens`] for
+/// chunk-boundary math.
 pub struct Tokenizer {
     kind: TokenizerKind,
-    bpe: &'static CoreBPE,
 }
 
 impl std::fmt::Debug for Tokenizer {
@@ -32,154 +49,144 @@ impl std::fmt::Debug for Tokenizer {
 }
 
 impl Tokenizer {
-    /// Returns a tokenizer of the requested kind, backed by a process-wide
-    /// singleton `CoreBPE` whose vocab is embedded at compile time.
+    /// Returns a tokenizer handle. `kind` is retained for configuration /
+    /// serialization compatibility but does not change the estimate — all
+    /// variants use the chars-per-token heuristic.
     ///
     /// # Errors
     ///
-    /// Currently always returns `Ok` (the embedded vocab is always
-    /// available). The `Result` is retained so future tokenizer backends
-    /// can fail without a breaking signature change.
+    /// Currently always returns `Ok`. The `Result` is retained so a future
+    /// exact-tokenizer backend can fail without a breaking signature change.
     pub fn new(kind: TokenizerKind) -> Result<Self> {
-        let bpe = match kind {
-            TokenizerKind::Cl100kBase => tiktoken_rs::cl100k_base_singleton(),
-            TokenizerKind::O200kBase => tiktoken_rs::o200k_base_singleton(),
-            TokenizerKind::R50kBase => tiktoken_rs::r50k_base_singleton(),
-            TokenizerKind::P50kBase => tiktoken_rs::p50k_base_singleton(),
-            TokenizerKind::P50kEdit => tiktoken_rs::p50k_edit_singleton(),
-            TokenizerKind::O200kHarmony => tiktoken_rs::o200k_harmony_singleton(),
-        };
-        Ok(Self { kind, bpe })
+        Ok(Self { kind })
     }
 
-    /// Returns the [`TokenizerKind`] of this tokenizer.
+    /// Returns the configured [`TokenizerKind`] (informational only).
     #[must_use]
     pub const fn kind(&self) -> TokenizerKind {
         self.kind
     }
 
-    /// Returns the BPE token count of `text`.
+    /// Estimated token count of `text` (≈ chars ÷ 4, ceiling).
     #[must_use]
     pub fn count(&self, text: &str) -> usize {
-        self.bpe.encode_ordinary(text).len()
+        count_tokens(text)
     }
 
-    /// Splits `text` at the token boundary that yields at most `max_tokens`
+    /// Splits `text` at a character boundary that yields at most `max_tokens`
     /// tokens. Returns `(byte_offset, token_count)` where:
     ///
-    /// - `byte_offset` is the byte position in `text` at which to cut.
-    ///   Always snapped to a UTF-8 character boundary.
-    /// - `token_count` is the actual number of tokens in the prefix
-    ///   `[..byte_offset]` (may be less than `max_tokens` due to the
-    ///   char-boundary snap).
+    /// - `byte_offset` is the byte position in `text` at which to cut
+    ///   (always a UTF-8 character boundary, never 0 for non-empty input).
+    /// - `token_count` is the estimated token count of the prefix
+    ///   `[..byte_offset]` (≤ `max_tokens`).
     ///
-    /// If the entire text encodes to `<= max_tokens` tokens, returns
+    /// If the entire text estimates to `<= max_tokens` tokens, returns
     /// `(text.len(), token_count)`.
     ///
     /// # Errors
     ///
-    /// Returns [`BitVanesError::InvalidInput`] if token decoding fails
-    /// (structurally impossible for valid BPE output, but handled for
-    /// safety).
+    /// Returns [`crate::error::BitVanesError::InvalidInput`] if a non-empty
+    /// input would produce a zero-length split (structurally impossible for
+    /// the heuristic, but retained for API safety).
     pub fn split_at_token_boundary(&self, text: &str, max_tokens: usize) -> Result<(usize, usize)> {
-        let tokens = self.bpe.encode_ordinary(text);
-        if tokens.len() <= max_tokens {
-            return Ok((text.len(), tokens.len()));
+        let total = count_tokens(text);
+        if total <= max_tokens {
+            return Ok((text.len(), total));
         }
-
-        let prefix_tokens = &tokens[..max_tokens];
-        let prefix_bytes = self
-            .bpe
-            .decode_bytes(prefix_tokens)
-            .map_err(|e| BitVanesError::InvalidInput(format!("BPE decode failed: {e}")))?;
-
-        let offset = snap_to_char_boundary(text, prefix_bytes.len());
-        // Recount tokens in the snapped prefix to get an exact count.
-        let actual_tokens = self.bpe.encode_ordinary(&text[..offset]).len();
-        Ok((offset, actual_tokens))
+        let char_budget = max_tokens.saturating_mul(CHARS_PER_TOKEN);
+        let offset = nth_char_offset(text, char_budget);
+        if offset == 0 {
+            // No progress possible — force at least one character so the
+            // chunker never loops on an oversized single span.
+            let forced = nth_char_offset(text, 1);
+            return Ok((forced, count_tokens(&text[..forced])));
+        }
+        let actual = count_tokens(&text[..offset]);
+        Ok((offset, actual))
     }
 
-    /// Returns the `(byte_offset, token_count)` of a suffix of `text`
-    /// covering at most `n_tokens` tokens. This is the symmetric companion
-    /// to [`split_at_token_boundary`], used by the chunker to derive the
-    /// overlap tail of an already-emitted chunk.
+    /// Returns the `(byte_offset, token_count)` of a suffix of `text` covering
+    /// at most `n_tokens` tokens — the symmetric companion to
+    /// [`split_at_token_boundary`], used to derive an overlap tail.
     ///
-    /// - `byte_offset` is the start of the suffix, snapped to a UTF-8
-    ///   character boundary. It is `0` when the whole text is within `n_tokens`.
-    /// - `token_count` is the exact token count of `text[byte_offset..]`.
+    /// - `byte_offset` is the start of the suffix (a UTF-8 character
+    ///   boundary; `0` when the whole text is within `n_tokens`).
+    /// - `token_count` is the estimated token count of `text[byte_offset..]`.
     ///
     /// # Errors
     ///
-    /// Returns [`BitVanesError::InvalidInput`] if token decoding fails.
+    /// Currently always returns `Ok`; the `Result` is retained for API
+    /// compatibility with [`split_at_token_boundary`].
     pub fn suffix_tokens(&self, text: &str, n_tokens: usize) -> Result<(usize, usize)> {
-        let tokens = self.bpe.encode_ordinary(text);
-        if tokens.len() <= n_tokens {
-            return Ok((0, tokens.len()));
+        let total = count_tokens(text);
+        if total <= n_tokens {
+            return Ok((0, total));
         }
-
-        let suffix_tokens = &tokens[tokens.len() - n_tokens..];
-        let suffix_bytes = self
-            .bpe
-            .decode_bytes(suffix_tokens)
-            .map_err(|e| BitVanesError::InvalidInput(format!("BPE decode failed: {e}")))?;
-
-        let offset = snap_to_char_boundary(text, text.len().saturating_sub(suffix_bytes.len()));
-        let actual_tokens = self.bpe.encode_ordinary(&text[offset..]).len();
-        Ok((offset, actual_tokens))
+        let total_chars = text.chars().count();
+        let suffix_chars = n_tokens.saturating_mul(CHARS_PER_TOKEN);
+        let skip_chars = total_chars.saturating_sub(suffix_chars);
+        let offset = nth_char_offset(text, skip_chars);
+        let actual = count_tokens(&text[offset..]);
+        Ok((offset, actual))
     }
 }
 
-/// Moves `offset` forward to the nearest UTF-8 character boundary in `text`.
-/// This prevents splitting a multi-byte character when cutting at an
-/// arbitrary byte offset.
-fn snap_to_char_boundary(text: &str, mut offset: usize) -> usize {
-    while offset < text.len() && !text.is_char_boundary(offset) {
-        offset += 1;
-    }
-    offset
+/// Estimated token count: ceiling of `chars ÷ CHARS_PER_TOKEN`. Empty → 0.
+fn count_tokens(text: &str) -> usize {
+    text.chars().count().div_ceil(CHARS_PER_TOKEN)
+}
+
+/// Returns the byte offset of the start of the `n`-th (0-indexed) character,
+/// clamped to `text.len()`. Always a valid UTF-8 boundary.
+fn nth_char_offset(text: &str, n: usize) -> usize {
+    text.char_indices().nth(n).map_or(text.len(), |(b, _)| b)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn cl100k() -> Tokenizer {
-        Tokenizer::new(TokenizerKind::Cl100kBase).expect("cl100k_base should load")
+    fn tok() -> Tokenizer {
+        Tokenizer::new(TokenizerKind::Cl100kBase).expect("tokenizer constructs")
     }
 
     #[test]
     fn token_count_is_nonzero_for_nonempty_text() {
-        let t = cl100k();
+        let t = tok();
         assert!(t.count("hello world") > 0);
     }
 
     #[test]
     fn token_count_grows_with_text() {
-        let t = cl100k();
+        let t = tok();
         let short = t.count("hello");
         let long = t.count("hello world this is a longer sentence");
         assert!(long > short, "{long} should be > {short}");
     }
 
     #[test]
-    fn cl100k_hello_world_is_one_token_for_hello() {
-        let t = cl100k();
-        // "hello" is a single cl100k token (id 15339).
-        assert_eq!(t.count("hello"), 1);
+    fn count_estimates_via_chars_per_token() {
+        // Heuristic: ceil(chars / 4). "hello" = 5 chars → 2 tokens.
+        let t = tok();
+        assert_eq!(t.count(""), 0);
+        assert_eq!(t.count("hello"), 2); // ceil(5/4)
+        assert_eq!(t.count("hell"), 1); // 4 chars → 1
+        assert_eq!(t.count("hello world"), 3); // 11 chars → 3
     }
 
     #[test]
     fn split_at_boundary_returns_full_text_when_under_limit() {
-        let t = cl100k();
+        let t = tok();
         let text = "hello";
         let (offset, count) = t.split_at_token_boundary(text, 100).unwrap();
         assert_eq!(offset, text.len());
-        assert_eq!(count, 1);
+        assert_eq!(count, t.count(text));
     }
 
     #[test]
     fn split_at_boundary_caps_at_max_tokens() {
-        let t = cl100k();
+        let t = tok();
         let text = "hello world this is a test of the tokenizer splitting";
         let (offset, count) = t.split_at_token_boundary(text, 3).unwrap();
         assert!(count <= 3, "token count {count} should be <= 3");
@@ -191,8 +198,8 @@ mod tests {
 
     #[test]
     fn split_at_boundary_snaps_to_char_boundary() {
-        let t = cl100k();
-        // Use a multi-byte char to verify snapping.
+        let t = tok();
+        // Use a multi-byte char to verify char-boundary snapping.
         let text = "héllo wörld тест тест";
         let (offset, _) = t.split_at_token_boundary(text, 2).unwrap();
         assert!(
@@ -202,14 +209,9 @@ mod tests {
     }
 
     #[test]
-    fn o200k_base_loads() {
-        let t = Tokenizer::new(TokenizerKind::O200kBase).expect("o200k_base should load");
-        assert!(t.count("hello world") > 0);
-    }
-
-    #[test]
     fn all_tokenizer_variants_load_and_count() {
-        // Every variant in TokenizerKind must produce a working tokenizer.
+        // Every variant must construct and count; all resolve to the same
+        // heuristic, but the wire-format compatibility is what we guard here.
         for kind in [
             TokenizerKind::Cl100kBase,
             TokenizerKind::O200kBase,
@@ -219,7 +221,7 @@ mod tests {
             TokenizerKind::O200kHarmony,
         ] {
             let t = Tokenizer::new(kind)
-                .unwrap_or_else(|e| panic!("tokenizer {kind:?} should load: {e}"));
+                .unwrap_or_else(|e| panic!("tokenizer {kind:?} should construct: {e}"));
             assert!(
                 t.count("hello world") > 0,
                 "tokenizer {kind:?} returned zero tokens for non-empty text"
@@ -230,13 +232,13 @@ mod tests {
 
     #[test]
     fn token_count_of_empty_text_is_zero() {
-        let t = cl100k();
+        let t = tok();
         assert_eq!(t.count(""), 0);
     }
 
     #[test]
     fn suffix_tokens_returns_full_text_when_under_limit() {
-        let t = cl100k();
+        let t = tok();
         let text = "hello";
         let (offset, count) = t.suffix_tokens(text, 100).unwrap();
         assert_eq!(offset, 0);
@@ -245,7 +247,7 @@ mod tests {
 
     #[test]
     fn suffix_tokens_snaps_to_char_boundary_and_respects_cap() {
-        let t = cl100k();
+        let t = tok();
         let text = "héllo wörld тест тест more tokens here";
         let n = 3;
         let (offset, count) = t.suffix_tokens(text, n).unwrap();

@@ -1,0 +1,40 @@
+# Rust build artifacts
+/**/target/
+/**/*.rs.bk
+
+# wasm-pack output
+/**/pkg/
+
+# Node / web
+/**/node_modules/
+/**/dist/
+/**/.tsbuildinfo
+
+# Local cargo / env overrides
+/**/.cargo/config.local.toml
+.env
+.env.*
+*.local
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local run artifacts
+/output*.json
+/output*.csv
+/output*.arrow
+
+# Bench / fuzz corpora (regenerated locally)
+/**/criterion/
+/**/fuzz/artifacts/
+/**/fuzz/corpus/
+
+# Note: Cargo.lock files ARE committed by design (deterministic binary builds).

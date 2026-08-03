@@ -94,10 +94,10 @@ impl ModelDetector {
 #[cfg(feature = "pii-model")]
 impl PiiDetector for ModelDetector {
     fn detect(&self, _text: &str, _findings: &mut Vec<PiiFinding>) -> Result<()> {
-        // TODO(phase-6): load ONNX model + tokenizer, run inference, map
+        // Future work: load ONNX model + tokenizer, run inference, map
         // token-level NER labels back to character offsets, filter by
         // min_confidence, and append PiiFindings.
-        unimplemented!("ModelDetector is a stub; ONNX integration lands in a future phase")
+        unimplemented!("ModelDetector is a stub; ONNX integration lands in a future release")
     }
 }
 

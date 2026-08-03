@@ -52,9 +52,9 @@ fn get_pdfium() -> Result<Pdfium> {
     if pdfium_available() {
         Ok(Pdfium::default())
     } else {
-        Err(BitVanesError::InvalidInput(
+        Err(BitVanesError::FeatureNotEnabled(
             "pdfium runtime library not available; install libpdfium or use --pdf-mode text-only"
-                .to_string(),
+                .into(),
         ))
     }
 }
@@ -65,8 +65,8 @@ fn get_pdfium() -> Result<Pdfium> {
 ///
 /// # Errors
 ///
-/// Returns [`BitVanesError::InvalidInput`] if pdfium is unavailable or the
-/// bytes are not a parseable PDF.
+/// Returns [`BitVanesError::FeatureNotEnabled`] if pdfium is unavailable, or
+/// [`BitVanesError::InvalidInput`] if the bytes are not a parseable PDF.
 pub fn extract_pdf_text(bytes: &[u8]) -> Result<String> {
     let pdfium = get_pdfium()?;
     let document = pdfium
@@ -140,11 +140,13 @@ pub fn redact_pdf(
     mode: PdfRedactMode,
 ) -> Result<(Vec<u8>, PdfSanitizeResult)> {
     // Bind to a runtime Pdfium library. Fail-closed if none is available.
-    let bindings = Pdfium::bind_to_system_library().map_err(|e| {
-        BitVanesError::InvalidInput(format!(
-            "pdfium runtime library not available ({e}); install libpdfium or fall back to --pdf-mode text-only"
-        ))
-    })?;
+    let bindings = Pdfium::bind_to_system_library()
+        .map_err(|e| BitVanesError::FeatureNotEnabled(
+            format!(
+                "pdfium runtime library not available ({e}); install libpdfium or fall back to --pdf-mode text-only"
+            )
+            .into(),
+        ))?;
     let pdfium = Pdfium::new(bindings);
 
     let document = pdfium
@@ -287,7 +289,11 @@ fn apply_redact(page: &mut PdfPage<'_>, pii_rects: &[PdfRect]) -> Result<()> {
 /// Flatten mode: draw blackout rects, render the page to a 300 DPI bitmap, then
 /// strip the entire vector/text object layer and place the rasterized image as
 /// the page's sole object — guaranteeing there is no recoverable text layer.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::similar_names)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::similar_names
+)]
 fn apply_flatten(page: &mut PdfPage<'_>, pii_rects: &[PdfRect]) -> Result<()> {
     const DPI: f32 = 300.0;
     let page_w_pt = page.width().value;

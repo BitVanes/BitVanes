@@ -23,10 +23,11 @@ pub enum BitVanesError {
     #[error("invalid pipeline configuration: {0}")]
     InvalidConfig(String),
 
-    /// A requested optional feature was not compiled into this build (for
-    /// example, a parser requested without its cargo feature enabled).
+    /// A requested optional feature was not compiled into this build, or its
+    /// runtime backend is unavailable (for example, PDF destructive redaction
+    /// requested without a runtime `libpdfium` on the host).
     #[error("feature not enabled: {0}")]
-    FeatureNotEnabled(&'static str),
+    FeatureNotEnabled(Box<str>),
 
     /// An error from the underlying Apache Arrow library while building or
     /// exporting a [`RecordBatch`](arrow::record_batch::RecordBatch).

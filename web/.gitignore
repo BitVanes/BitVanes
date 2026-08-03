@@ -4,10 +4,6 @@ node_modules/
 # Build output
 dist/
 
-# wasm pkg — committed for Vercel builds.
-# After rebuilding core's wasm, run `npm run sync-wasm` to update.
-# src/wasm/ is NOT gitignored so deployments work without the core repo.
-
 # Local env
 *.local
 .env

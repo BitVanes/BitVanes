@@ -7,13 +7,14 @@ expectations and the fastest path to a merged PR.
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --features cli-pdf,parallel,ipc,csv,office,mmap -- -D warnings
-cargo test --workspace --features cli-pdf,parallel,ipc,csv,office,mmap
+cargo clippy --workspace --all-targets \
+  --features cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config -- -D warnings
+cargo test --workspace \
+  --features cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config
 ```
 
-Wasm: `wasm-pack build crates/wasm --target web --out-dir pkg` (target ≤ 5 MB
-gzipped). NOTE: the wasm/browser surface is slated for removal — see
-`REBRAND.md` (Phase 7).
+Wasm: `wasm-pack build crates/wasm --target web --out-dir pkg` (the legacy
+browser binding — the web dashboard itself talks to the native daemon).
 
 ## Engineering expectations
 

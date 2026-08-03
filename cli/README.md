@@ -14,12 +14,6 @@ Four subcommands:
 
 ## Install
 
-### From source
-
-```bash
-cargo install --git https://github.com/BitVanes/cli.git
-```
-
 ### From release
 
 Download the latest binary from
@@ -29,6 +23,19 @@ Download the latest binary from
 curl -L https://github.com/BitVanes/cli/releases/latest/download/bitvanes-x86_64-linux.tar.gz | tar xz
 sudo mv bitvanes /usr/local/bin/
 bitvanes --version
+```
+
+### From source
+
+The CLI links `bitvanes-core` via a path dependency, so build it from the
+monorepo layout (both repos checked out side by side):
+
+```bash
+git clone https://github.com/BitVanes/core.git
+git clone https://github.com/BitVanes/cli.git
+cd cli
+cargo build --release
+./target/release/bitvanes --help
 ```
 
 ## Usage
@@ -80,13 +87,33 @@ bitvanes daemon --port 8080 --config Bitvanes.toml --dashboard-dir ../web/dist
 
 The daemon binds to **127.0.0.1 only** (never `0.0.0.0`). Endpoints:
 
-| Method | Path       | Body / Result                                 |
-|--------|------------|-----------------------------------------------|
-| GET    | `/health`  | → `ok`                                        |
-| POST   | `/filter`  | request body (text) → sanitized text          |
+| Method | Path            | Body / Result                                          |
+|--------|-----------------|--------------------------------------------------------|
+| GET    | `/health`       | → `ok`                                                 |
+| GET    | `/entitlement`  | → `{ status, plan, seats, allow_paid_features }`       |
+| POST   | `/filter`       | request body (text) → sanitized text                   |
+| POST   | `/scrub`        | `{ "text": "…" }` → `{ redacted, total, categories }`  |
 
-> TODO(phase-6-followup): `/scrub` multipart upload, embedded dashboard assets
-> via `rust-embed`, and request audit logging.
+Pass `--license-key bv1_…` (or set `BITVANES_LICENSE_KEY`) to surface a paid
+plan in `/entitlement`. The signature-verification cloud backend is a stub;
+see `src/entitlement.rs` for the wire-format contract.
+
+When built with `--features dashboard`, the daemon also serves the embedded web
+dashboard at `/` (no `--dashboard-dir` needed); drag-and-drop a `.txt`/`.md`/
+`.json` file onto the dashboard to scrub it locally.
+
+### Destructive PDF redaction
+
+`scrub` redacts PDFs destructively by default (`--pdf-mode redact`): PII text
+objects are deleted from the page-object tree and a black rectangle is drawn
+over the region. `--pdf-mode flatten` rasterizes each page to 300 DPI and drops
+the text layer entirely (strongest guarantee). Both require a runtime
+`libpdfium`; if absent the command fails closed rather than emit unredacted
+bytes. `--pdf-mode text-only` extracts and redacts text without pdfium.
+
+```bash
+bitvanes scrub report.pdf --out clean.pdf --rules email,ssn --pdf-mode flatten
+```
 
 ### Interactive TUI
 
@@ -104,6 +131,10 @@ patterns = ["email", "ssn", "credit_card", "street_address"]
 min_confidence = 0.5
 anchor_window = 7
 report_only = ["phone"]
+# Tier-2 personal-name gazetteer: customer-supplied phrases, matched
+# case-insensitively on word boundaries.
+names = ["Jane Doe", "Akhmad"]
+use_generic_names = false   # opt-in bundled common-name starter list
 
 [[pii.custom]]
 name = "project_id"
@@ -137,18 +168,6 @@ local NER model — tracked under the `pii-model` feature.)
 Markdown, plain text, HTML, JSON, PDF, DOCX, PPTX, XLSX, EPUB, RTF. Format is
 auto-detected from the file extension. Scanned/image-only PDFs have no
 extractable text layer and are reported as invalid input.
-
-## Build from source
-
-```bash
-git clone https://github.com/BitVanes/cli.git
-cd cli
-cargo build --release
-./target/release/bitvanes --help
-```
-
-The CLI depends on [`bitvanes-core`](https://github.com/BitVanes/core) (path
-dependency during the rebrand; restored to a git tag in releases).
 
 ## License
 

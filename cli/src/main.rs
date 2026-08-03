@@ -7,6 +7,7 @@
 //! - `tui`    : interactive terminal UI.
 
 mod daemon;
+mod entitlement;
 mod filter;
 mod scrub;
 mod shared;
