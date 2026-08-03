@@ -104,4 +104,8 @@ jobs:
         uses: taiki-e/install-action@cargo-audit
       - name: Audit core dependencies
         working-directory: core
-        run: cargo audit
+        # RUSTSEC-2026-0187 (lopdf): stack-overflow DoS via deeply nested PDF
+        # objects. Transitive via pdf-extract 0.10 (pins lopdf ^0.38); the
+        # destructive redaction path uses pdfium, not lopdf. Accepted until
+        # pdf-extract publishes a lopdf 0.42 bump.
+        run: cargo audit --ignore RUSTSEC-2026-0187
