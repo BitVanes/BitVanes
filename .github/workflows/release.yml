@@ -66,8 +66,6 @@ jobs:
     name: publish release
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
@@ -75,32 +73,18 @@ jobs:
           path: assets
       - name: Flatten assets
         run: find assets -type f \( -name 'bitvanes-*.tar.gz' -o -name 'bitvanes-*.zip' \) -exec mv {} . \;
-      # Publish to the PUBLIC releases repo (source stays private). Requires
-      # a PAT with `contents:write` on BitVanes/releases, stored as the
-      # RELEASES_PAT secret in THIS (private source) repo. The default
-      # GITHUB_TOKEN cannot write cross-repo.
+      # Publish to the PUBLIC releases repo (source stays private). Uses a PAT
+      # (RELEASES_PAT secret) — the default GITHUB_TOKEN can't write cross-repo.
+      # `gh release create` with an explicit --target avoids the "invalid
+      # target_commitish" error that softprops hit (the tag doesn't exist in
+      # the releases repo, so we anchor it on its main branch).
       - name: Publish to BitVanes/releases
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: BitVanes/releases
-          token: ${{ secrets.RELEASES_PAT }}
-          tag_name: ${{ github.ref_name }}
-          name: BitVanes ${{ github.ref_name }}
-          generate_release_notes: true
-          body: |
-            Install with one line:
-
-            **macOS / Linux**
-            ```
-            curl -fsSL https://bitvanes.com/install.sh | sh
-            ```
-
-            **Windows (PowerShell)**
-            ```
-            irm https://bitvanes.com/install.ps1 | iex
-            ```
-
-            Binaries are currently unsigned — see the site for Gatekeeper/SmartScreen bypass notes.
-          files: |
-            bitvanes-*.tar.gz
-            bitvanes-*.zip
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo BitVanes/releases \
+            --target main \
+            --title "BitVanes $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md \
+            bitvanes-*.tar.gz bitvanes-*.zip

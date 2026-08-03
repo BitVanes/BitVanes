@@ -12,8 +12,8 @@
 //!     `BITVANES_LICENSE_PRIVATE_KEY` on the minting backend; NEVER commit it),
 //!   - a sample `BV-SOLO-<jwt>` license signed by that key (for testing).
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signer, SigningKey};
 use rand::rngs::OsRng;
 use serde_json::json;

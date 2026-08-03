@@ -64,13 +64,9 @@ pub fn run(args: ScrubArgs) -> Result<(), Box<dyn std::error::Error>> {
         require_pro(&status, "batch / directory processing")
             .map_err(Box::<dyn std::error::Error>::from)?;
     }
-    if pdf_mode.is_some() {
-        require_pro(
-            &status,
-            "PDF destructive redaction (--pdf-mode redact|flatten)",
-        )
-        .map_err(Box::<dyn std::error::Error>::from)?;
-    }
+    // NOTE: PDF destructive redaction is gated per-file (only when an actual
+    // PDF is processed with --pdf-mode redact|flatten), NOT here — because
+    // `--pdf-mode redact` is the default and must not block plain-text scrubs.
     if !resolved.profile.names.is_empty() || resolved.profile.use_generic_names {
         require_pro(&status, "personal-name gazetteer")
             .map_err(Box::<dyn std::error::Error>::from)?;
@@ -79,7 +75,7 @@ pub fn run(args: ScrubArgs) -> Result<(), Box<dyn std::error::Error>> {
         require_pro(&status, "hash redaction policy")
             .map_err(Box::<dyn std::error::Error>::from)?;
     }
-    // Office formats are gated per-file in the loop below.
+    // Office formats + PDF destructive redaction are gated per-file below.
     // -----------------------------------------------------------------------
 
     let files = collect_files(&args.input)?;
@@ -114,10 +110,20 @@ pub fn run(args: ScrubArgs) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
-        if is_office_format(infer_format(path)) {
+        let fmt = infer_format(path);
+        if is_office_format(fmt) {
             if let Err(e) =
                 require_pro(&status, "office document formats (DOCX/XLSX/PPTX/EPUB/RTF)")
             {
+                failures.push((path.clone(), e));
+                continue;
+            }
+        }
+        if fmt == DocumentFormat::Pdf && pdf_mode.is_some() {
+            if let Err(e) = require_pro(
+                &status,
+                "PDF destructive redaction (--pdf-mode redact|flatten)",
+            ) {
                 failures.push((path.clone(), e));
                 continue;
             }

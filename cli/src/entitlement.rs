@@ -158,7 +158,7 @@ impl LicenseChecker {
     #[must_use]
     pub fn from_key(key: LicenseKey) -> Self {
         Self {
-            status: key_to_status(&key, &    LICENSE_PUBKEY),
+            status: key_to_status(&key, &LICENSE_PUBKEY),
         }
     }
 }
@@ -396,7 +396,7 @@ pub fn save_key(key: &LicenseKey) -> Result<(), String> {
 /// or cannot be persisted.
 pub fn install_key(raw: &str) -> Result<String, String> {
     let key = LicenseKey::parse(raw)?;
-    let payload = key.verify(&    LICENSE_PUBKEY)?;
+    let payload = key.verify(&LICENSE_PUBKEY)?;
     save_key(&key)?;
     Ok(format!(
         "License verified and saved (tier: {}, sub: {}). Pro features unlocked.",
