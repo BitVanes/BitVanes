@@ -104,7 +104,13 @@ export default function DownloadButtons() {
         <summary>Or install from your terminal</summary>
         <div className="dl-cli-blocks">
           <div>
-            <span className="dl-cli-label">macOS / Linux</span>
+            <span className="dl-cli-label">macOS (Homebrew)</span>
+            <pre>
+              <code>brew tap BitVanes/bitvanes {'&&'} brew install bitvanes</code>
+            </pre>
+          </div>
+          <div>
+            <span className="dl-cli-label">macOS / Linux (script)</span>
             <pre>
               <code>curl -fsSL https://bitvanes.com/install.sh | sh</code>
             </pre>
@@ -118,7 +124,8 @@ export default function DownloadButtons() {
         </div>
         <p className="dl-unsigned-note">
           ⚠️ Binaries are currently unsigned — macOS will show “unidentified
-          developer” (right-click → Open, or{' '}
+          developer” (Homebrew handles this automatically; for manual installs:
+          right-click → Open, or{' '}
           <code>xattr -d com.apple.quarantine /usr/local/bin/bitvanes</code>) and
           Windows SmartScreen will prompt (More info → Run anyway).
         </p>
