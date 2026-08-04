@@ -17,12 +17,19 @@ jobs:
         include:
           - runs-on: ubuntu-latest
             os-label: linux
+            target: x86_64-unknown-linux-gnu
             artifact: bitvanes-x86_64-linux.tar.gz
           - runs-on: macos-latest
-            os-label: macos
+            os-label: macos-arm64
+            target: aarch64-apple-darwin
             artifact: bitvanes-aarch64-macos.tar.gz
+          - runs-on: macos-latest
+            os-label: macos-intel
+            target: x86_64-apple-darwin
+            artifact: bitvanes-x86_64-macos.tar.gz
           - runs-on: windows-latest
             os-label: windows
+            target: x86_64-pc-windows-msvc
             artifact: bitvanes-x86_64-windows.zip
     runs-on: ${{ matrix.runs-on }}
     steps:
@@ -40,22 +47,24 @@ jobs:
         working-directory: web
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: 'cli -> cli/target'
 
       - name: Build bitvanes (release + dashboard)
         working-directory: cli
-        run: cargo build --release --features dashboard
+        run: cargo build --release --features dashboard --target ${{ matrix.target }}
 
       - name: Archive (unix)
         if: matrix.os-label != 'windows'
-        run: tar czf "${{ matrix.artifact }}" -C cli/target/release bitvanes
+        run: tar czf "${{ matrix.artifact }}" -C cli/target/${{ matrix.target }}/release bitvanes
 
       - name: Archive (windows)
         if: matrix.os-label == 'windows'
         shell: pwsh
-        run: Compress-Archive -Path cli/target/release/bitvanes.exe -DestinationPath ${{ matrix.artifact }}
+        run: Compress-Archive -Path cli/target/${{ matrix.target }}/release/bitvanes.exe -DestinationPath ${{ matrix.artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
