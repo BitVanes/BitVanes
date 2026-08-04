@@ -12,14 +12,11 @@ import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
  * default; override with VITE_PAYPAL_CLIENT_ID for live.
  */
 
-// PayPal client IDs are public (they're embedded in browser SDK URLs). This is
-// the SANDBOX id; set VITE_PAYPAL_CLIENT_ID to your LIVE id for production.
-const PAYPAL_CLIENT_ID =
-  import.meta.env.VITE_PAYPAL_CLIENT_ID ||
-  'AQOpEbyMvmDD1q_E75lQ8utN86yyn-zJhpSH7RVxPf9Z0jh138iFqX_RFGmX1AEXmQqAVOoLqdSaG7K6';
+// PayPal client IDs are public (embedded in browser SDK URLs).
+// Set VITE_PAYPAL_CLIENT_ID in Vercel to your live ID.
+const PAYPAL_CLIENT_ID = import.meta.env.VITE_PAYPAL_CLIENT_ID || '';
 
 const PRICES = { solo: '99.00', business: '399.00' };
-const isSandbox = PAYPAL_CLIENT_ID.startsWith('AQ'); // sandbox ids typically start with AQ
 
 type Result = { tier: 'solo' | 'business'; email: string; licenseKey: string; exp: string };
 
@@ -143,7 +140,6 @@ export default function Checkout() {
                 )}
               </div>
             </div>
-            {isSandbox && <p className="checkout-sandbox">⚠️ Sandbox mode — no real charges.</p>}
           </>
         )}
       </div>

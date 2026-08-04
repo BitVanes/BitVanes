@@ -479,6 +479,24 @@ section h2 {
 /* ── Pricing ────────────────────────────── */
 
 .pricing { max-width: var(--max-width); margin: 0 auto; padding: 50px 40px 40px; text-align: center; }
+.intro-banner {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  padding: 8px 18px;
+  border-radius: 999px;
+  margin-bottom: 20px;
+}
+.price-strike {
+  text-decoration: line-through;
+  font-size: 0.6em;
+  color: var(--text-dim);
+  margin-right: 8px;
+  font-weight: 500;
+}
 .pricing h2 { font-size: clamp(26px, 3.5vw, 34px); margin-bottom: 8px; }
 .pricing-sub { color: var(--text-muted); margin-bottom: 32px; max-width: 620px; margin-left: auto; margin-right: auto; }
 .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; text-align: left; }

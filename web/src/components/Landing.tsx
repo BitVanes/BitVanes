@@ -254,11 +254,11 @@ function Features() {
 function Pricing() {
   return (
     <section className="pricing" id="pricing">
-      <h2>Free to start. Pay only if you need the heavy lifting.</h2>
+      <div className="intro-banner">⏳ Introductory pricing — rates increase as the product matures. Lock in lifetime access now.</div>
+      <h2>Free to start. Pay once for lifetime access.</h2>
       <p className="pricing-sub">
-        Free to start. Pay once for lifetime access to the heavy lifting —
-        PDF/office formats, name detection, batch. Keys are verified offline;
-        nothing phones home.
+        PDF/office formats, name detection, batch processing. Keys are verified
+        offline; nothing phones home.
       </p>
       <div className="tiers">
         <div className="tier">
@@ -278,6 +278,7 @@ function Pricing() {
           <div className="tier-badge">Most popular</div>
           <h3>Solo</h3>
           <div className="price">
+            <span className="price-strike">$149</span>
             $99<span className="price-sub">once · lifetime</span>
           </div>
           <p className="tier-tag">For one person handling real documents. Pay once, own forever.</p>
@@ -295,6 +296,7 @@ function Pricing() {
         <div className="tier">
           <h3>Business</h3>
           <div className="price">
+            <span className="price-strike">$599</span>
             $399<span className="price-sub">once · lifetime</span>
           </div>
           <p className="tier-tag">For teams that process a lot. 5 seats, one-time.</p>
