@@ -256,6 +256,8 @@ a:hover { color: var(--accent-hover); }
 .checkout-success h4 { font-size: 18px; margin-bottom: 8px; }
 .checkout-success p { color: var(--text-muted); font-size: 14px; margin-bottom: 10px; line-height: 1.6; }
 .checkout-instr code { font-size: 12px; word-break: break-all; }
+.checkout-key-box { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+.checkout-key { flex: 1; font-size: 11px; word-break: break-all; text-align: left; background: var(--bg); border: 1px solid var(--border); padding: 10px 12px; border-radius: var(--radius-sm); color: var(--accent); }
 
 /* ── Section headings ───────────────────── */
 

@@ -21,11 +21,13 @@ const PAYPAL_CLIENT_ID =
 const PRICES = { solo: '99.00', business: '399.00' };
 const isSandbox = PAYPAL_CLIENT_ID.startsWith('AQ'); // sandbox ids typically start with AQ
 
-type Result = { tier: 'solo' | 'business'; email: string };
+type Result = { tier: 'solo' | 'business'; email: string; licenseKey: string; exp: string };
 
 export default function Checkout() {
   const [email, setEmail] = useState('');
   const [result, setResult] = useState<Result | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
 
   const createOrder = (tier: 'solo' | 'business') => (_data: unknown, actions: any) =>
@@ -36,8 +38,36 @@ export default function Checkout() {
       ],
     });
 
-  const onApprove = (tier: 'solo' | 'business') => (_data: unknown, actions: any) =>
-    actions.order.capture().then(() => setResult({ tier, email }));
+  const onApprove = (_data: { orderID: string }, _actions: any) =>
+    // The SDK captures the order; then we verify + mint server-side.
+    _actions.order.capture().then(async () => {
+      setError(null);
+      try {
+        const resp = await fetch('/api/v1/license/verify-and-mint', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ orderID: _data.orderID, email }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || `server returned ${resp.status}`);
+        }
+        const data = await resp.json();
+        setResult({ tier: data.tier, email, licenseKey: data.licenseKey, exp: data.exp });
+      } catch (e) {
+        setError(
+          'Payment captured but key delivery failed. Check your email — the backup webhook will mint + send it.',
+        );
+      }
+    });
+
+  const copyKey = () => {
+    if (result) {
+      navigator.clipboard.writeText(result.licenseKey);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   if (!PAYPAL_CLIENT_ID) {
     return <p className="checkout-error">PayPal not configured (set VITE_PAYPAL_CLIENT_ID).</p>;
@@ -52,21 +82,23 @@ export default function Checkout() {
           <div className="checkout-success">
             <h4>Payment received 🎉</h4>
             <p>
-              Your <strong>{result.tier}</strong> license is being generated and emailed to{' '}
-              <code>{result.email}</code>.
+              Your <strong>{result.tier}</strong> license is ready. Copy this key
+              and activate it:
             </p>
+            <div className="checkout-key-box">
+              <code className="checkout-key">{result.licenseKey}</code>
+              <button className="btn-outline btn-sm" onClick={copyKey}>
+                {copied ? '✓ Copied' : 'Copy'}
+              </button>
+            </div>
             <p className="checkout-instr">
-              Activate it once it arrives:
+              Paste it in your terminal:
               <br />
               <code>bitvanes config --key BV-{result.tier.toUpperCase()}-…</code>
             </p>
-            {isSandbox && (
-              <p className="checkout-sandbox">
-                Sandbox mode — no real charge. If the email doesn’t arrive (sandbox senders are
-                restricted), grab the key from <strong>Vercel → Functions → Logs</strong> (look for
-                <code> license minted:</code>).
-              </p>
-            )}
+            <p className="checkout-sandbox">
+              A copy was also emailed to <code>{result.email}</code>.
+            </p>
             <button className="btn-outline btn-sm" onClick={() => setResult(null)}>
               Pay again
             </button>
@@ -93,7 +125,7 @@ export default function Checkout() {
                     style={{ layout: 'vertical', label: 'pay', height: 40 }}
                     fundingSource="paypal"
                     createOrder={createOrder('solo')}
-                    onApprove={onApprove('solo')}
+                    onApprove={onApprove}
                   />
                 )}
               </div>
@@ -106,7 +138,7 @@ export default function Checkout() {
                     style={{ layout: 'vertical', label: 'pay', height: 40 }}
                     fundingSource="paypal"
                     createOrder={createOrder('business')}
-                    onApprove={onApprove('business')}
+                    onApprove={onApprove}
                   />
                 )}
               </div>

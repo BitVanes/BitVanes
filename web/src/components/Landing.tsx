@@ -18,6 +18,7 @@ export default function Landing({ onOpenDashboard }: { onOpenDashboard: () => vo
       <Hero />
       <LiveDemo />
       <Problems />
+      <VsIncumbents />
       <DemoStrip />
       <HowItWorks />
       <Features />
@@ -109,6 +110,52 @@ function Problems() {
         <span className="pain-strike">a compliance incident</span>
         <br />
         — or <strong>30 seconds with BitVanes</strong>.
+      </div>
+    </section>
+  );
+}
+
+/** Direct comparison — why BitVanes instead of the incumbent tools. */
+function VsIncumbents() {
+  const rows = [
+    { feature: 'Runs locally — data never leaves your machine', bitvanes: true, adobe: 'Add-on, requires upload', purview: 'Cloud-dependent' },
+    { feature: 'Destructive redaction (PII bytes deleted, not painted over)', bitvanes: true, adobe: 'Partial', purview: 'Labels only' },
+    { feature: 'PDF + Word + Excel + PPTX + JSON + logs', bitvanes: true, adobe: 'PDF focus', purview: 'M365 focus' },
+    { feature: 'Stream filtering (pipe stdin → stdout)', bitvanes: true, adobe: false, purview: false },
+    { feature: 'CLI + daemon — scriptable, automatable', bitvanes: true, adobe: false, purview: 'API (enterprise tier)' },
+    { feature: 'No account, no cloud, no telemetry', bitvanes: true, adobe: false, purview: false },
+    { feature: 'Price', bitvanes: '$99 once', adobe: '$20+/mo', purview: '$12+/user/mo' },
+  ];
+  return (
+    <section className="vs-incumbents">
+      <h2>BitVanes vs. the usual suspects</h2>
+      <p className="section-sub">
+        Adobe Pro and Microsoft Purview are built for the cloud. BitVanes is
+        built for the 80% of documents that should never touch one.
+      </p>
+      <div className="vs-table-wrap">
+        <table className="vs-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th className="vs-bitvanes">BitVanes</th>
+              <th>Adobe Pro</th>
+              <th>MS Purview</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.feature}>
+                <td className="vs-feature">{r.feature}</td>
+                <td className="vs-bitvanes">
+                  {r.bitvanes === true ? '✅' : r.bitvanes}
+                </td>
+                <td>{r.adobe === true ? '✅' : r.adobe === false ? '❌' : r.adobe}</td>
+                <td>{r.purview === true ? '✅' : r.purview === false ? '❌' : r.purview}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </section>
   );
