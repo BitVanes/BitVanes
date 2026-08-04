@@ -191,6 +191,12 @@ fn write_outcome(stream: &mut UnixStream, outcome: &DetectOutcome) -> std::io::R
 // ---------------------------------------------------------------------------
 
 fn main() -> std::io::Result<()> {
+    // Auto-discover a bundled `libonnxruntime` (sibling `lib/` dir) so a
+    // tarball/installer "just works" with no ORT_DYLIB_PATH setup. ort reads
+    // this env at `init()`; set it before the model loads. Safe at startup —
+    // we're single-threaded before the accept loop spawns connections.
+    ensure_ort_dylib();
+
     let socket_path = parse_socket_path();
     // Clean up any stale socket so bind succeeds across restarts.
     let _ = std::fs::remove_file(&socket_path);
@@ -231,4 +237,48 @@ fn parse_socket_path() -> PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/tmp"));
     dir.join("bitvanes-nerd.sock")
+}
+
+/// The platform's `libonnxruntime` filename.
+const fn ort_filename() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "libonnxruntime.dylib"
+    } else if cfg!(target_os = "windows") {
+        "onnxruntime.dll"
+    } else {
+        "libonnxruntime.so"
+    }
+}
+
+/// If `ORT_DYLIB_PATH` is unset, point it at a bundled `libonnxruntime` next
+/// to this binary (sibling `lib/` dir, sibling file, or one dir up's `lib/`)
+/// so a self-contained install runs without env setup. No-op if the lib is
+/// already on the env or no bundled lib is found (ort will then search PATH).
+///
+/// `set_var` is `unsafe` in edition 2024 (not thread-safe); this runs once at
+/// single-threaded startup, before the accept loop, so it is sound.
+#[allow(unsafe_code)]
+fn ensure_ort_dylib() {
+    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+        return; // user/explicit config wins
+    }
+    let Some(exe) = std::env::current_exe().ok() else {
+        return;
+    };
+    let Some(exe_dir) = exe.parent() else {
+        return;
+    };
+    let name = ort_filename();
+    let mut candidates = vec![exe_dir.join("lib").join(name), exe_dir.join(name)];
+    if let Some(up) = exe_dir.parent() {
+        candidates.push(up.join("lib").join(name));
+    }
+    if let Some(path) = candidates.into_iter().find(|p| p.exists()) {
+        eprintln!(
+            "bitvanes-nerd: using bundled libonnxruntime at {}",
+            path.display()
+        );
+        // SAFETY: single-threaded startup; no other thread reads the env yet.
+        unsafe { std::env::set_var("ORT_DYLIB_PATH", &path) };
+    }
 }

@@ -1,54 +1,47 @@
 # BitVanes installer — Windows (PowerShell).
-# Usage:  irm https://bitvanes.com/install.ps1 | iex
 #
-# Downloads the latest bitvanes-x86_64-windows.zip from GitHub Releases and
-# extracts it to ~/AppData/Local/BitVanes, then prints the PATH guidance.
+#   irm https://bitvanes.com/install.ps1 | iex
+#
+# Downloads the latest release for Windows from BitVanes/releases into
+# %USERPROFILE%\.bitvanes and adds it to the user PATH. The bundle is
+# self-contained (NER model + onnxruntime.dll + pdfium.dll included).
+# For Tier-2 name redaction, also run `bitvanes-nerd` (and set
+# BITVANES_LICENSE_KEY for paid features).
 
 $ErrorActionPreference = 'Stop'
 
-$repo = 'BitVanes/releases'
-$api = "https://api.github.com/repos/$repo/releases/latest"
-$assetName = 'bitvanes-x86_64-windows.zip'
+$Prefix = if ($env:BITVANES_INSTALL_PREFIX) { $env:BITVANES_INSTALL_PREFIX } else { Join-Path $env:USERPROFILE '.bitvanes' }
+$Asset = 'bitvanes-x86_64-windows.zip'
 
-Write-Host 'Fetching latest release…' -ForegroundColor White
-$release = Invoke-RestMethod -Uri $api -Headers @{ Accept = 'application/vnd.github+json' }
+Write-Host 'bitvanes: resolving latest release... ' -NoNewline
+$api = Invoke-RestMethod -Uri 'https://api.github.com/repos/BitVanes/releases/releases/latest'
+$url = ($api.assets | Where-Object { $_.name -eq $Asset }).browser_download_url
+if (-not $url) { throw "could not find $Asset in the latest BitVanes release" }
+Write-Host 'ok'
 
-$asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-if (-not $asset) {
-    Write-Host "Asset '$assetName' not found in the latest release." -ForegroundColor Red
-    Write-Host 'Build from source: https://github.com/'$repo'#readme' -ForegroundColor Red
-    exit 1
+$tmp = New-Item -ItemType Directory -Force -Path (Join-Path $env:TEMP "bv-install-$(Get-Random)")
+Write-Host "bitvanes: downloading $Asset... " -NoNewline
+Invoke-WebRequest -Uri $url -OutFile (Join-Path $tmp.FullName $Asset)
+Write-Host 'ok'
+
+New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
+Expand-Archive -Path (Join-Path $tmp.FullName $Asset) -DestinationPath $Prefix -Force
+Write-Host "bitvanes: installed to $Prefix"
+
+# Add to user PATH (idempotent).
+$path = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($path -notlike "*$Prefix*") {
+    [Environment]::SetEnvironmentVariable('Path', "$Prefix;$path", 'User')
+    Write-Host "bitvanes: added $Prefix to user PATH (restart your terminal)"
 }
 
-$tmp = New-Item -ItemType Directory -Force -Path (Join-Path $env:TEMP "bitvanes-install-$(Get-Random)")
-$zip = Join-Path $tmp $assetName
+Write-Host @"
 
-Write-Host "Downloading $assetName…" -ForegroundColor White
-Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
+bitvanes: next steps (reopen your terminal first):
+  bitvanes --help            # the CLI (scrub / filter / daemon / tui)
+  Start-Process bitvanes-nerd  # the Tier-2 NER sidecar (run for name redaction)
 
-$installDir = Join-Path $env:LOCALAPPDATA 'BitVanes'
-New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-
-Write-Host "Extracting to $installDir" -ForegroundColor White
-Expand-Archive -Path $zip -DestinationPath $installDir -Force
-
-$exe = Join-Path $installDir 'bitvanes.exe'
-if (Test-Path $exe) {
-    Write-Host "Installed: $exe" -ForegroundColor Green
-} else {
-    Write-Host "Extracted to $installDir" -ForegroundColor Green
-}
-
-# PATH guidance.
-$pathHasIt = ($env:Path -split ';') -contains $installDir
-if (-not $pathHasIt) {
-    Write-Host ''
-    Write-Host "Add to PATH for this session:" -ForegroundColor Yellow
-    Write-Host "    `$env:Path += ';$installDir'" -ForegroundColor Gray
-    Write-Host "Or persist (run as admin / user):" -ForegroundColor Yellow
-    Write-Host "    [Environment]::SetEnvironmentVariable('Path', `$env:Path + ';$installDir', 'User')" -ForegroundColor Gray
-}
-
-Write-Host ''
-Write-Host 'Windows: if SmartScreen prompts, choose "More info" then "Run anyway".' -ForegroundColor Yellow
-Write-Host 'Run:  bitvanes --help' -ForegroundColor White
+Tier-2 NER (personal names, orgs, locations) needs the sidecar running AND a
+paid license key in BITVANES_LICENSE_KEY. Without it, BitVanes still fully
+redacts email, SSN, phone, credit card, routing numbers, API keys, JWTs.
+"@

@@ -37,12 +37,54 @@ use crate::pii::{PiiFinding, Scrubber};
 /// enforces a single global binding, so we probe exactly once and reuse.
 static PDFIUM_AVAILABLE: OnceLock<bool> = OnceLock::new();
 
+/// The platform's libpdfium filename.
+const fn pdfium_filename() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "libpdfium.dylib"
+    } else if cfg!(target_os = "windows") {
+        "pdfium.dll"
+    } else {
+        "libpdfium.so"
+    }
+}
+
+/// Searches the locations a bundled install puts `libpdfium` (next to the
+/// binary, in a sibling `lib/`, or one dir up's `lib/` for a `bin/`+`lib/`
+/// install layout). Returns the first existing candidate so the engine works
+/// from a self-contained tarball/installer with no `PATH`/env setup.
+fn bundled_pdfium() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    let name = pdfium_filename();
+    let mut candidates = vec![
+        exe_dir.join("lib").join(name),
+        exe_dir.join(name),
+    ];
+    if let Some(up) = exe_dir.parent() {
+        candidates.push(up.join("lib").join(name));
+        candidates.push(up.join(name)); // flat bundle next to the binary's dir
+    }
+    candidates.into_iter().find(|p| p.exists())
+}
+
+/// Installs the global pdfium binding if a library can be found: prefer a
+/// bundled sibling (so a tarball/installer "just works"), then the system
+/// library. Never panics — returns `false` and the caller fails closed.
+fn bind_pdfium() -> bool {
+    if let Some(path) = bundled_pdfium() {
+        if Pdfium::bind_to_library(path).is_ok() {
+            return true;
+        }
+    }
+    Pdfium::bind_to_system_library().is_ok()
+}
+
 /// Returns `true` if a usable runtime `libpdfium` is available. The probe runs
 /// once and is cached; it never installs the global binding, so it is safe to
 /// call before any redaction.
 #[must_use]
 pub fn pdfium_available() -> bool {
-    *PDFIUM_AVAILABLE.get_or_init(|| Pdfium::bind_to_system_library().is_ok())
+    *PDFIUM_AVAILABLE.get_or_init(bind_pdfium)
 }
 
 /// Returns a [`Pdfium`] handle, reusing the process-wide global binding. The

@@ -4,38 +4,79 @@ on:
   push:
     tags: ['v*']
 
-# softprops/action-gh-release needs write access to create the release.
+# softprops/action-gh-release + gh release need write access.
 permissions:
   contents: write
 
+env:
+  # Pin the runtime-lib versions so releases are reproducible. Bump in lockstep.
+  ORT_VERSION: '1.28.0'
+  # bblanchon/pdfium-binaries publishes rolling release assets per OS/arch.
+  PDFIUM_RELEASE: 'chromium/7460'
+
+# A self-contained install bundle per platform:
+#   bitvanes           — the CLI (dashboard embedded)
+#   bitvanes-nerd      — the Tier-2 NER sidecar
+#   lib/                — libonnxruntime + libpdfium (auto-discovered by the
+#                        binaries, so no PATH/env setup for the user)
+#   models/             — the bundled Int8 NER model + tokenizer
+# Both binaries find their runtime lib + the model next to the executable, so
+# extracting the archive and running `./bitvanes` (or `bitvanes daemon`) and
+# `./bitvanes-nerd` "just works".
+
 jobs:
   build:
-    name: build (${{ matrix.os-label }})
+    name: build (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runs-on: ubuntu-latest
-            os-label: linux
+          - label: linux-x86_64
+            runs-on: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: bitvanes-x86_64-linux.tar.gz
-          - runs-on: macos-latest
-            os-label: macos-arm64
+            archive: bitvanes-x86_64-linux.tar.gz
+            ort-asset: onnxruntime-linux-x64-1.28.0.tgz
+            ort-lib: lib/libonnxruntime.so
+            ort-lib-out: libonnxruntime.so
+            pdfium-asset: pdfium-linux-x64.tgz
+            pdfium-lib: lib/libpdfium.so
+            pdfium-lib-out: libpdfium.so
+          - label: macos-arm64
+            runs-on: macos-latest
             target: aarch64-apple-darwin
-            artifact: bitvanes-aarch64-macos.tar.gz
-          - runs-on: macos-latest
-            os-label: macos-intel
+            archive: bitvanes-aarch64-macos.tar.gz
+            ort-asset: onnxruntime-osx-arm64-1.28.0.tgz
+            ort-lib: lib/libonnxruntime.dylib
+            ort-lib-out: libonnxruntime.dylib
+            pdfium-asset: pdfium-mac-arm64.tgz
+            pdfium-lib: lib/libpdfium.dylib
+            pdfium-lib-out: libpdfium.dylib
+          - label: macos-x86_64
+            runs-on: macos-13
             target: x86_64-apple-darwin
-            artifact: bitvanes-x86_64-macos.tar.gz
-          - runs-on: windows-latest
-            os-label: windows
+            archive: bitvanes-x86_64-macos.tar.gz
+            ort-asset: onnxruntime-osx-x64-1.28.0.tgz
+            ort-lib: lib/libonnxruntime.dylib
+            ort-lib-out: libonnxruntime.dylib
+            pdfium-asset: pdfium-mac-x64.tgz
+            pdfium-lib: lib/libpdfium.dylib
+            pdfium-lib-out: libpdfium.dylib
+          - label: windows-x86_64
+            runs-on: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: bitvanes-x86_64-windows.zip
+            archive: bitvanes-x86_64-windows.zip
+            ort-asset: onnxruntime-win-x64-1.28.0.zip
+            ort-lib: lib/onnxruntime.dll
+            ort-lib-out: onnxruntime.dll
+            pdfium-asset: pdfium-win-x64.tgz
+            pdfium-lib: bin/pdfium.dll
+            pdfium-lib-out: pdfium.dll
+
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v5
 
-      # Build the dashboard bundle first — the `dashboard` feature embeds it.
+      # 1. Build the web dashboard first — the CLI's `dashboard` feature embeds it.
       - uses: actions/setup-node@v5
         with:
           node-version: '20'
@@ -46,33 +87,94 @@ jobs:
       - run: npm run build
         working-directory: web
 
+      # 2. Rust toolchain + both binaries (release). The CLI embeds the
+      #    dashboard; nerd pulls ort + tokenizers (load-dynamic — clean build).
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: 'cli -> cli/target'
-
-      - name: Build bitvanes (release + dashboard)
+          workspaces: |
+            cli -> cli/target
+            nerd -> nerd/target
+      - name: Build bitvanes (CLI + dashboard)
         working-directory: cli
         run: cargo build --release --features dashboard --target ${{ matrix.target }}
+      - name: Build bitvanes-nerd (sidecar + model)
+        working-directory: nerd
+        run: cargo build --release --features model --target ${{ matrix.target }}
 
+      # 3. Assemble the bundle layout the binaries auto-discover.
+      - name: Stage bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/bundle"
+          mkdir -p "$STAGE/lib" "$STAGE/models"
+          cp "cli/target/${{ matrix.target }}/release/bitvanes${{ matrix.label == 'windows-x86_64' && '.exe' || '' }}" "$STAGE/"
+          cp "nerd/target/${{ matrix.target }}/release/bitvanes-nerd${{ matrix.label == 'windows-x86_64' && '.exe' || '' }}" "$STAGE/"
+          # NER model + tokenizer (pinned + SHA256-verified by the script).
+          nerd/scripts/fetch-model.sh "$STAGE/models"
+
+      # 4. libonnxruntime (microsoft/onnxruntime) — for the NER sidecar.
+      - name: Fetch libonnxruntime
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/bundle"
+          cd "$RUNNER_TEMP"
+          curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${{ matrix.ort-asset }}" -o ort.pkg
+          case "${{ matrix.ort-asset }}" in
+            *.tgz) tar xzf ort.pkg ;;
+            *.zip) unzip -o ort.pkg ;;
+          esac
+          find . -path "*${{ matrix.ort-lib }}"
+          cp "$(find . -path "*${{ matrix.ort-lib }}" | head -1)" "$STAGE/lib/${{ matrix.ort-lib-out }}"
+
+      # 5. libpdfium (bblanchon/pdfium-binaries) — for destructive PDF redaction.
+      - name: Fetch libpdfium
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/bundle"
+          cd "$RUNNER_TEMP"
+          curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/${PDFIUM_RELEASE}/${{ matrix.pdfium-asset }}" -o pdfium.pkg
+          tar xzf pdfium.pkg
+          cp "${{ matrix.pdfium-lib }}" "$STAGE/lib/${{ matrix.pdfium-lib-out }}"
+
+      # 6. README pointing users at the docs.
+      - name: Stage bundle README
+        shell: bash
+        run: |
+          STAGE="$RUNNER_TEMP/bundle"
+          cat > "$STAGE/README.txt" <<'EOF'
+          BitVanes — extract this folder anywhere and run:
+            ./bitvanes --help            # the CLI (scrub / filter / daemon / tui)
+            ./bitvanes-nerd --help       # the Tier-2 NER sidecar (run for names)
+          Everything BitVanes needs (NER model + runtimes) is in this folder;
+          no PATH or env setup. See https://bitvanes.com or the --help output.
+          EOF
+
+      # 7. Archive.
       - name: Archive (unix)
-        if: matrix.os-label != 'windows'
-        run: tar czf "${{ matrix.artifact }}" -C cli/target/${{ matrix.target }}/release bitvanes
-
+        if: matrix.label != 'windows-x86_64'
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          tar czf "$GITHUB_WORKSPACE/${{ matrix.archive }}" -C bundle .
       - name: Archive (windows)
-        if: matrix.os-label == 'windows'
+        if: matrix.label == 'windows-x86_64'
         shell: pwsh
-        run: Compress-Archive -Path cli/target/${{ matrix.target }}/release/bitvanes.exe -DestinationPath ${{ matrix.artifact }}
+        run: |
+          Compress-Archive -Path "$env:RUNNER_TEMP\bundle\*" -DestinationPath "$env:GITHUB_WORKSPACE\${{ matrix.archive }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
 
-  release:
-    name: publish release
+  publish:
+    name: publish to BitVanes/releases
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -84,10 +186,7 @@ jobs:
         run: find assets -type f \( -name 'bitvanes-*.tar.gz' -o -name 'bitvanes-*.zip' \) -exec mv {} . \;
       # Publish to the PUBLIC releases repo (source stays private). Uses a PAT
       # (RELEASES_PAT secret) — the default GITHUB_TOKEN can't write cross-repo.
-      # `gh release create` with an explicit --target avoids the "invalid
-      # target_commitish" error that softprops hit (the tag doesn't exist in
-      # the releases repo, so we anchor it on its main branch).
-      - name: Publish to BitVanes/releases
+      - name: Publish
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
         run: |
