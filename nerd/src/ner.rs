@@ -107,6 +107,98 @@ pub(crate) struct TokenPred {
     pub confidence: f32,
 }
 
+/// A raw per-subword model output before word-level merging. The inference
+/// boundary produces a slice of these; [`merge_subwords`] turns them into the
+/// word-level [`TokenPred`]s that [`aggregate`] consumes.
+#[derive(Debug, Clone)]
+pub(crate) struct RawToken {
+    /// Argmax label index into [`CONLL_LABELS`].
+    pub label_id: usize,
+    /// Softmax probability of the argmax label.
+    pub confidence: f32,
+    /// Byte span of this subword in the source text (from the tokenizer's
+    /// offset mapping). `(0, 0)` for special tokens.
+    pub offset: (u32, u32),
+    /// The word this subword belongs to (`None` for special tokens like
+    /// `[CLS]` / `[SEP]` / padding, which are dropped before merging).
+    pub word_id: Option<u32>,
+}
+
+/// ConLL-2003 label order used by the `dslim/bert-base-NER` output head. The
+/// inference boundary MUST map model logits onto this order (or read the
+/// model's `id2label` and adapt); a mismatch is a silent recall bug.
+pub(crate) const CONLL_LABELS: [&str; 9] = [
+    "O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC", "B-MISC", "I-MISC",
+];
+
+/// Map a model label id to a [`Tag`] via [`CONLL_LABELS`]. Out-of-range ids
+/// become [`Tag::Outside`] (fail-safe).
+#[must_use]
+pub(crate) fn label_id_to_tag(id: usize) -> Tag {
+    CONLL_LABELS
+        .get(id)
+        .copied()
+        .map_or(Tag::Outside, parse_tag)
+}
+
+/// Merge subword predictions into word-level [`TokenPred`]s.
+///
+/// Standard BERT-NER post-step: group subwords by `word_id` (dropping special
+/// tokens where `word_id` is `None`), take the **first subword's** label
+/// (the canonical strategy), and compute the word's byte span as the union of
+/// its subwords' offsets. Confidence is the first subword's confidence.
+///
+/// Returned in original word order.
+pub(crate) fn merge_subwords(tokens: &[RawToken]) -> Vec<TokenPred> {
+    // Walk in order; a change in word_id closes the current word group.
+    let mut out = Vec::new();
+    let mut cur_word: Option<(u32, Tag, f32, u32, u32)> = None; // (id, tag, conf, start, end)
+
+    for tok in tokens {
+        let Some(word_id) = tok.word_id else {
+            // Special token — flush any open word (words don't span special
+            // tokens) and skip.
+            if let Some((_, tag, conf, start, end)) = cur_word.take() {
+                out.push(TokenPred { tag, start, end, confidence: conf });
+            }
+            continue;
+        };
+
+        match cur_word {
+            Some((cw, _, _, _, _)) if cw == word_id => {
+                // Same word: extend the byte span.
+                if let Some((_, tag, conf, start, end)) = cur_word.as_mut() {
+                    if tok.offset.0 < *start {
+                        *start = tok.offset.0;
+                    }
+                    if tok.offset.1 > *end {
+                        *end = tok.offset.1;
+                    }
+                    // first-subword label/confidence are kept (no update)
+                    let _ = (tag, conf);
+                }
+            }
+            _ => {
+                // New word: flush previous, open a new one with this subword.
+                if let Some((_, tag, conf, start, end)) = cur_word.take() {
+                    out.push(TokenPred { tag, start, end, confidence: conf });
+                }
+                cur_word = Some((
+                    word_id,
+                    label_id_to_tag(tok.label_id),
+                    tok.confidence,
+                    tok.offset.0,
+                    tok.offset.1,
+                ));
+            }
+        }
+    }
+    if let Some((_, tag, conf, start, end)) = cur_word {
+        out.push(TokenPred { tag, start, end, confidence: conf });
+    }
+    out
+}
+
 /// A span being accumulated across consecutive `B-X` / `I-X` tokens.
 #[derive(Debug)]
 struct OpenSpan {
@@ -428,5 +520,101 @@ mod tests {
         assert_eq!(f.len(), 3);
         assert!(f[0].end <= f[1].start);
         assert!(f[1].end <= f[2].start);
+    }
+
+    // ----- label_id_to_tag + merge_subwords -----
+
+    #[test]
+    fn label_id_maps_to_conll_tags() {
+        assert_eq!(label_id_to_tag(0), Tag::Outside);
+        assert_eq!(label_id_to_tag(1), Tag::Begin(Entity::Per));
+        assert_eq!(label_id_to_tag(2), Tag::Inside(Entity::Per));
+        assert_eq!(label_id_to_tag(3), Tag::Begin(Entity::Org));
+        assert_eq!(label_id_to_tag(4), Tag::Inside(Entity::Org));
+        assert_eq!(label_id_to_tag(7), Tag::Begin(Entity::Misc));
+        assert_eq!(label_id_to_tag(99), Tag::Outside, "out-of-range is fail-safe");
+        assert_eq!(label_id_to_tag(usize::MAX), Tag::Outside);
+    }
+
+    fn raw(label_id: usize, conf: f32, off: (u32, u32), word: Option<u32>) -> RawToken {
+        RawToken {
+            label_id,
+            confidence: conf,
+            offset: off,
+            word_id: word,
+        }
+    }
+
+    #[test]
+    fn merge_drops_special_tokens() {
+        // [CLS] Alice [SEP] → only "Alice" survives as word 0.
+        let toks = vec![
+            raw(0, 0.99, (0, 0), None),         // [CLS]
+            raw(1, 0.97, (0, 5), Some(0)),      // Alice (B-PER)
+            raw(0, 0.99, (0, 0), None),         // [SEP]
+        ];
+        let merged = merge_subwords(&toks);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].tag, Tag::Begin(Entity::Per));
+        assert_eq!((merged[0].start, merged[0].end), (0, 5));
+    }
+
+    #[test]
+    fn merge_unions_subword_offsets_and_keeps_first_label() {
+        // "Smithsonian" → subwords "Smith" (B-ORG) + "##son" (I-ORG) + "##ian"
+        // (I-ORG), same word id. First label (B-ORG) wins; span = union.
+        let toks = vec![
+            raw(3, 0.90, (0, 5), Some(0)),   // "Smith"   B-ORG
+            raw(4, 0.80, (5, 8), Some(0)),   // "##son"   I-ORG
+            raw(4, 0.75, (8, 11), Some(0)),  // "##ian"   I-ORG
+        ];
+        let merged = merge_subwords(&toks);
+        assert_eq!(merged.len(), 1, "one word");
+        assert_eq!(merged[0].tag, Tag::Begin(Entity::Org), "first-subword label");
+        assert_eq!((merged[0].start, merged[0].end), (0, 11), "union of offsets");
+        assert!((merged[0].confidence - 0.90).abs() < 1e-6, "first confidence");
+    }
+
+    #[test]
+    fn merge_splits_adjacent_words() {
+        // "Alice Bob" → two words; each gets its own TokenPred.
+        let toks = vec![
+            raw(1, 0.95, (0, 5), Some(0)),  // Alice
+            raw(1, 0.93, (6, 9), Some(1)),  // Bob
+        ];
+        let merged = merge_subwords(&toks);
+        assert_eq!(merged.len(), 2);
+        assert_eq!((merged[0].start, merged[0].end), (0, 5));
+        assert_eq!((merged[1].start, merged[1].end), (6, 9));
+    }
+
+    #[test]
+    fn merge_handles_trailing_word_without_special_token() {
+        // No [SEP] at the end — the open word must still be flushed.
+        let toks = vec![raw(1, 0.9, (0, 5), Some(0))];
+        let merged = merge_subwords(&toks);
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn merge_then_aggregate_end_to_end_pure() {
+        // Full pure-Rust path: raw subwords -> merged words -> findings,
+        // exercised without any model. "##" continuation tokens share a word.
+        let text = "Mary acme";
+        let m = text.find("Mary").unwrap() as u32;
+        let a = text.find("acme").unwrap() as u32;
+        let raws = vec![
+            raw(0, 0.99, (0, 0), None),          // [CLS]
+            raw(1, 0.96, (m, m + 4), Some(0)),   // Mary B-PER
+            raw(3, 0.91, (a, a + 4), Some(1)),   // acme B-ORG
+            raw(0, 0.99, (0, 0), None),          // [SEP]
+        ];
+        let merged = merge_subwords(&raws);
+        let findings = aggregate(text, &merged, 0.50);
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].entity, "person_name");
+        assert_eq!((findings[0].start, findings[0].end), (m, m + 4));
+        assert_eq!(findings[1].entity, "organization");
+        assert_eq!((findings[1].start, findings[1].end), (a, a + 4));
     }
 }
