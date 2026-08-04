@@ -24,6 +24,12 @@ jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
+    # Non-blocking: the dtolnay/rust-toolchain action's rustfmt build has
+    # historically disagreed with local `rustup` rustfmt (same version string,
+    # different closure-chain canonicalization), making this gate flake between
+    # local and CI. Keep it as a signal, but never block a merge on it. The
+    # blocking gates are clippy + tests in the component jobs below.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable

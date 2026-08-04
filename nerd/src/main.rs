@@ -87,12 +87,8 @@ fn read_frame<R: Read>(r: &mut R) -> std::io::Result<Vec<u8>> {
 }
 
 fn write_frame<W: Write>(w: &mut W, payload: &[u8]) -> std::io::Result<()> {
-    let len = u32::try_from(payload.len()).map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "frame exceeds 4 GiB",
-        )
-    })?;
+    let len = u32::try_from(payload.len())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "frame exceeds 4 GiB"))?;
     w.write_all(&len.to_be_bytes())?;
     w.write_all(payload)?;
     w.flush()
@@ -108,15 +104,12 @@ fn write_frame<W: Write>(w: &mut W, payload: &[u8]) -> std::io::Result<()> {
 /// is the single enforcement point the model is gated behind.
 ///
 /// Returns `Ok(())` for entitled, `Err((code, msg))` for refused.
-fn check_entitlement(
-    token: &Option<String>,
-) -> Result<(), (&'static str, String)> {
+fn check_entitlement(token: &Option<String>) -> Result<(), (&'static str, String)> {
     match token.as_deref() {
         Some(t) if t.starts_with(LICENSE_KEY_PREFIX) => Ok(()),
         _ => Err((
             "unentitled",
-            "NER requires a paid plan; free tier is not served by the model."
-                .into(),
+            "NER requires a paid plan; free tier is not served by the model.".into(),
         )),
     }
 }
@@ -126,9 +119,7 @@ fn check_entitlement(
 /// text. With `model` enabled this loads the bundled Int8 ONNX BERT-NER via
 /// `ort` + `tokenizers`, aggregates BIO tags → byte offsets, floors by
 /// `min_confidence`, and maps PER/ORG/LOC → the engine's entity slugs.
-fn run_inference(
-    _text: &str,
-) -> Result<Vec<NerFinding>, (&'static str, String)> {
+fn run_inference(_text: &str) -> Result<Vec<NerFinding>, (&'static str, String)> {
     #[cfg(feature = "model")]
     {
         // TODO(phase-c): ort::Session from the embedded model bytes +
@@ -191,10 +182,7 @@ fn handle_connection(mut stream: UnixStream) {
     }
 }
 
-fn write_outcome(
-    stream: &mut UnixStream,
-    outcome: &DetectOutcome,
-) -> std::io::Result<()> {
+fn write_outcome(stream: &mut UnixStream, outcome: &DetectOutcome) -> std::io::Result<()> {
     let payload = serde_json::to_vec(outcome).map_err(std::io::Error::other)?;
     write_frame(stream, &payload)
 }
@@ -217,9 +205,7 @@ fn main() -> std::io::Result<()> {
         socket_path.display(),
         if cfg!(feature = "model") { "on" } else { "off" }
     );
-    eprintln!(
-        "  build without `--features model` serves NO NER (fails closed = unavailable)"
-    );
+    eprintln!("  build without `--features model` serves NO NER (fails closed = unavailable)");
 
     for stream in listener.incoming() {
         match stream {
