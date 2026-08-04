@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Checkout from './Checkout';
 import DownloadButtons from './DownloadButtons';
+import { ErrorBoundary } from './ErrorBoundary';
 import LiveDemo from './LiveDemo';
 
 const REPO = 'https://github.com/BitVanes/BitVanes';
@@ -16,7 +17,7 @@ export default function Landing({ onOpenDashboard }: { onOpenDashboard: () => vo
     <div className="landing">
       <Nav onOpenDashboard={onOpenDashboard} />
       <Hero />
-      <LiveDemo />
+      <ErrorBoundary><LiveDemo /></ErrorBoundary>
       <Problems />
       <VsIncumbents />
       <DemoStrip />
@@ -318,7 +319,7 @@ function Pricing() {
           agents can also pay directly with USDC over x402 — see{' '}
           <a href="#agents">For agents</a>.
         </p>
-        <Checkout />
+        <ErrorBoundary><Checkout /></ErrorBoundary>
       </div>
     </section>
   );

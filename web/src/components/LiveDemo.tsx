@@ -74,8 +74,17 @@ export default function LiveDemo() {
       setLoading(true);
       try {
         const wasm = await loadWasm();
+        if (typeof wasm.quick_scrub !== 'function') {
+          setError('Engine loaded but quick_scrub is missing — rebuild the wasm package.');
+          return;
+        }
         const out = wasm.quick_scrub(input, RULES);
-        setResult(out);
+        // Defensive: the wasm output might not have findings if the engine
+        // changed shape. Never crash on undefined.
+        setResult({
+          redacted: out?.redacted ?? input,
+          findings: Array.isArray(out?.findings) ? out.findings : [],
+        });
       } catch (e) {
         setError(String(e));
       } finally {
@@ -138,8 +147,8 @@ export default function LiveDemo() {
             <div className="live-demo-pane purified">
               <h4>
                 Redacted{' '}
-                {result && result.findings.length > 0 && (
-                  <span className="demo-count">{result.findings.length} found</span>
+                {result && (result.findings?.length ?? 0) > 0 && (
+                  <span className="demo-count">{result.findings.length}</span>
                 )}
                 {loading && <span className="demo-typing">scrubbing…</span>}
               </h4>
@@ -149,10 +158,10 @@ export default function LiveDemo() {
                 rows={12}
                 placeholder="Redacted output appears here as you type."
               />
-              {result && result.findings.length > 0 && (
+              {result && (result.findings?.length ?? 0) > 0 && (
                 <div className="demo-findings">
                   {Object.entries(
-                    result.findings.reduce<Record<string, number>>((acc, f) => {
+                    (result.findings || []).reduce<Record<string, number>>((acc, f) => {
                       acc[f.entity] = (acc[f.entity] || 0) + 1;
                       return acc;
                     }, {}),
