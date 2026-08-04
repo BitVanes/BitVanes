@@ -21,27 +21,14 @@ env:
   CORE_FEATURES: cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config,ner-client
 
 jobs:
-  fmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    # Non-blocking: the dtolnay/rust-toolchain action's rustfmt build has
-    # historically disagreed with local `rustup` rustfmt (same version string,
-    # different closure-chain canonicalization), making this gate flake between
-    # local and CI. Keep it as a signal, but never block a merge on it. The
-    # blocking gates are clippy + tests in the component jobs below.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.TOOLCHAIN_PIN }}
-          components: rustfmt
-      - run: cargo fmt --all --check
-        working-directory: core
-      - run: cargo fmt --all --check
-        working-directory: cli
-      - run: cargo fmt --all --check
-        working-directory: nerd
+  # NOTE: there is no separate `cargo fmt` job. The `dtolnay/rust-toolchain`
+  # action provisions a rustfmt whose canonicalization diverges from local
+  # `rustup` rustfmt even at identical version strings (different builds), so a
+  # fmt gate was a persistent false-positive between local and CI. Formatting
+  # is enforced locally via `cargo fmt`; the blocking CI gates are clippy
+  # (which subsumes most style issues) + tests in the component jobs below.
+  # If a fmt gate is wanted again, run it inside a pinned container so the
+  # rustfmt binary is identical everywhere.
 
   core:
     name: core (clippy + test)
