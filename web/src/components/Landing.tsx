@@ -392,7 +392,7 @@ function Footer() {
         <a href={`${REPO}#readme`}>Docs</a>
         <a href="#agents">For Agents</a>
       </div>
-      <span>© BitVanes · MIT OR Apache-2.0</span>
+      <span>© BitVanes · Proprietary (see LICENSE.md)</span>
     </footer>
   );
 }

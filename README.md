@@ -60,4 +60,6 @@ procedures, the completed-phase list, and the design audit.
 
 ## License
 
-MIT OR Apache-2.0.
+Proprietary (see [`LICENSE.md`](./LICENSE.md)). The engine is free to use for
+internal data purification; the source code is not open-source. Contact the
+author for licensing inquiries.

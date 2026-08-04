@@ -48,6 +48,12 @@ pub struct DaemonArgs {
     /// for the wire-format contract.
     #[arg(long, value_name = "KEY")]
     pub license_key: Option<String>,
+
+    /// Override the `bitvanes-nerd` sidecar socket (defaults to
+    /// `BITVANES_NERD_SOCKET`, then `$XDG_RUNTIME_DIR/bitvanes-nerd.sock`). NER
+    /// is attached automatically for paid tiers when the socket exists.
+    #[arg(long, value_name = "PATH")]
+    pub ner_socket: Option<String>,
 }
 
 /// Shared state for every request: the compiled scrubber + output policy +
@@ -61,10 +67,17 @@ struct DaemonState {
 
 /// Entry point for `bitvanes daemon`.
 pub fn run(args: DaemonArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let resolved = resolve_config(args.config.config.as_deref(), args.rules.rules.as_deref())?;
+    let mut resolved = resolve_config(args.config.config.as_deref(), args.rules.rules.as_deref())?;
     let entitlement = resolve_checker(args.license_key.as_deref());
     let status = entitlement.status();
     eprintln!("BitVanes entitlement: {}", status.label());
+    // Tier-2 NER: attach the `bitvanes-nerd` sidecar when paid + socket present.
+    resolved.scrubber = crate::ner::try_attach(
+        resolved.scrubber,
+        &status,
+        args.ner_socket.as_deref(),
+        &crate::ner::license_token(),
+    );
     let state = DaemonState {
         scrubber: Arc::new(resolved.scrubber),
         policy: resolved.policy,
@@ -185,7 +198,15 @@ async fn filter(
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
     let text = std::str::from_utf8(&body).map_err(|_| StatusCode::UNSUPPORTED_MEDIA_TYPE)?;
-    let (_redacted, _map, findings) = state.scrubber.scrub(text);
+    // Fail-closed: if the NER sidecar is attached but unreachable, return 500
+    // rather than emit text the sidecar would have scrubbed.
+    let (_redacted, _map, findings) = state
+        .scrubber
+        .scrub_with_detectors(text)
+        .map_err(|e| {
+            eprintln!("/filter scrub failed (NER sidecar reachable?): {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     let out = sanitize_text(text, &findings, &state.policy).map_err(|_| {
         eprintln!("sanitize_text failed on /filter request");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -215,7 +236,14 @@ async fn scrub(
     Json(req): Json<ScrubRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     use std::collections::BTreeMap;
-    let (_redacted, _map, findings) = state.scrubber.scrub(&req.text);
+    // Fail-closed: if the NER sidecar is attached but unreachable, return 500.
+    let (_redacted, _map, findings) = state
+        .scrubber
+        .scrub_with_detectors(&req.text)
+        .map_err(|e| {
+            eprintln!("/scrub failed (NER sidecar reachable?): {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     let out = sanitize_text(&req.text, &findings, &state.policy)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut cats: BTreeMap<String, usize> = BTreeMap::new();

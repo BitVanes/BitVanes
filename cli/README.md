@@ -171,4 +171,5 @@ extractable text layer and are reported as invalid input.
 
 ## License
 
-MIT OR Apache-2.0.
+Proprietary — see [`../LICENSE.md`](../LICENSE.md). Free for internal data
+purification; the source is not open-source.

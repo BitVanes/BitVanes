@@ -1,80 +1,72 @@
 #!/usr/bin/env sh
 # BitVanes installer — macOS / Linux.
-# Usage:  curl -fsSL https://bitvanes.com/install.sh | sh
 #
-# Downloads the latest binary for the detected OS/arch from GitHub Releases
-# and installs it to ~/.local/bin (no sudo). Prints PATH guidance.
+#   curl -fsSL https://bitvanes.com/install.sh | sh
+#
+# Downloads the latest release for your OS/arch from BitVanes/releases into
+# ~/.bitvanes and adds it to PATH. The bundle is self-contained (NER model +
+# libonnxruntime + libpdfium included), so no extra setup. For Tier-2 name
+# redaction, also run `bitvanes-nerd` (and set BITVANES_LICENSE_KEY for paid
+# features).
 
 set -eu
 
-REPO="BitVanes/releases"
-API="https://api.github.com/repos/${REPO}/releases/latest"
+PREFIX="${BITVANES_INSTALL_PREFIX:-$HOME/.bitvanes}"
 
-err() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
-info() { printf '\033[1m%s\033[0m\n' "$*"; }
+err() { printf 'bitvanes install: %s\n' "$*" >&2; exit 1; }
 
-OS="$(uname -s)"
-ARCH="$(uname -m)"
-
-case "$OS" in
-  Darwin) osname="macos" ;;
-  Linux)  osname="linux" ;;
-  *) err "Unsupported OS: $OS (use the Windows .zip / install.ps1)"; exit 1 ;;
+# --- detect OS + arch → asset name -------------------------------------------
+OS=$(uname -s)
+ARCH=$(uname -m)
+case "$OS/$ARCH" in
+  Linux/x86_64|Linux/amd64)            ASSET="bitvanes-x86_64-linux.tar.gz" ;;
+  Darwin/arm64)                        ASSET="bitvanes-aarch64-macos.tar.gz" ;;
+  Darwin/x86_64)                       ASSET="bitvanes-x86_64-macos.tar.gz" ;;
+  *) err "unsupported OS/arch: $OS/$ARCH (see bitvanes.com for manual download)" ;;
 esac
 
-case "$ARCH" in
-  arm64|aarch64) archname="aarch64" ;;
-  x86_64|amd64)  archname="x86_64" ;;
-  *) err "Unsupported arch: $ARCH"; exit 1 ;;
-esac
+# --- find the latest release download URL ------------------------------------
+API="https://api.github.com/repos/BitVanes/releases/releases/latest"
+printf 'bitvanes: resolving latest release... '
+URL=$(curl -fsSL "$API" \
+  | grep -o "\"browser_download_url\": *\"[^\"]*/$ASSET\"" \
+  | head -1 \
+  | grep -o 'https://[^"]*')
+[ -n "$URL" ] || err "could not find $ASSET in the latest BitVanes release"
+printf 'ok\n'
 
-# The release matrix produces bitvanes-{arch}-{os}.tar.gz
-asset="bitvanes-${archname}-${osname}.tar.gz"
+# --- download + extract ------------------------------------------------------
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+printf 'bitvanes: downloading %s... ' "$ASSET"
+curl -fsSL "$URL" -o "$TMP/$ASSET"
+printf 'ok\n'
 
-info "Fetching latest release…"
-asset_url="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$API" \
-  | grep -oE "\"browser_download_url\":\s*\"[^\"]+/${asset}\"" \
-  | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+mkdir -p "$PREFIX"
+# tarball extracts to `./` (binaries + lib/ + models/ at the archive root).
+tar xzf "$TMP/$ASSET" -C "$PREFIX"
+printf 'bitvanes: installed to %s\n' "$PREFIX"
 
-if [ -z "$asset_url" ]; then
-  err "No asset '$asset' found in the latest release."
-  err "Pre-built binaries may not be available yet. Build from source:"
-  err "  https://github.com/${REPO}#readme"
-  exit 1
+# --- macOS: clear Gatekeeper quarantine so the unsigned binaries run ---------
+if [ "$OS" = "Darwin" ]; then
+  xattr -dr com.apple.quarantine "$PREFIX" 2>/dev/null || true
 fi
+chmod +x "$PREFIX"/bitvanes "$PREFIX"/bitvanes-nerd 2>/dev/null || true
 
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
+# --- PATH hint ---------------------------------------------------------------
+add_to_path() {
+  cat <<EOF
 
-info "Downloading $asset…"
-curl -fsSL -o "${tmpdir}/${asset}" "$asset_url"
+bitvanes: add to PATH (restart shell after):
+  export PATH="$PREFIX:\$PATH"
 
-info "Installing to ~/.local/bin"
-install_dir="${HOME}/.local/bin"
-mkdir -p "$install_dir"
-tar -xzf "${tmpdir}/${asset}" -C "$install_dir" bitvanes 2>/dev/null || \
-  tar -xzf "${tmpdir}/${asset}" -C "$install_dir"
+then:
+  bitvanes --help            # the CLI (scrub / filter / daemon / tui)
+  bitvanes-nerd &            # the Tier-2 NER sidecar (run for name redaction)
 
-chmod +x "${install_dir}/bitvanes" 2>/dev/null || true
-
-info "✔ Installed: ${install_dir}/bitvanes"
-
-case ":${PATH}:" in
-  *":${install_dir}:"*) ;;
-  *)
-    info "Add ${install_dir} to your PATH:"
-    if [ -n "${ZSH_VERSION:-}" ] || [ "$SHELL" = */zsh ]; then
-      printf '    echo "export PATH=\$HOME/.local/bin:\$PATH" >> ~/.zshrc\n'
-    else
-      printf '    echo "export PATH=\$HOME/.local/bin:\$PATH" >> ~/.bashrc\n'
-    fi
-    ;;
-esac
-
-# macOS quarantine note.
-if [ "$osname" = "macos" ]; then
-  info "macOS: if Gatekeeper blocks the binary, run:"
-  printf '    xattr -d com.apple.quarantine %s/bitvanes\n' "$install_dir"
-fi
-
-info "Run:  bitvanes --help"
+Tier-2 NER (personal names, orgs, locations) needs the sidecar running AND a
+paid license key in BITVANES_LICENSE_KEY. Without it, BitVanes still fully
+redacts email, SSN, phone, credit card, routing numbers, API keys, JWTs.
+EOF
+}
+add_to_path

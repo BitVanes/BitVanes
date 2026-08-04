@@ -47,11 +47,17 @@ pub struct ScrubArgs {
     /// for `redact`/`flatten`; fails closed if unavailable.
     #[arg(long, value_name = "MODE", default_value = "redact")]
     pub pdf_mode: String,
+
+    /// Override the `bitvanes-nerd` sidecar socket (defaults to
+    /// `BITVANES_NERD_SOCKET`, then `$XDG_RUNTIME_DIR/bitvanes-nerd.sock`). NER
+    /// is attached automatically for paid tiers when the socket exists.
+    #[arg(long, value_name = "PATH")]
+    pub ner_socket: Option<String>,
 }
 
 /// Entry point for `bitvanes scrub`.
 pub fn run(args: ScrubArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let resolved = resolve_config(args.config.config.as_deref(), args.rules.rules.as_deref())?;
+    let mut resolved = resolve_config(args.config.config.as_deref(), args.rules.rules.as_deref())?;
     let policy = override_policy(&resolved.policy, args.redact.as_deref())?;
     // `text-only` → None (route to the text-layer path). Unknown → hard error.
     let pdf_mode = PdfRedactMode::parse(&args.pdf_mode)
@@ -77,6 +83,17 @@ pub fn run(args: ScrubArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     // Office formats + PDF destructive redaction are gated per-file below.
     // -----------------------------------------------------------------------
+
+    // Tier-2 NER: attach the `bitvanes-nerd` sidecar when the entitlement is
+    // paid AND the sidecar socket exists. Falls back to Tier-1 silently if not.
+    // When attached, `scrub_with_detectors` (below) is fail-closed: if the
+    // sidecar dies mid-batch, the affected file fails rather than leak.
+    resolved.scrubber = crate::ner::try_attach(
+        resolved.scrubber,
+        &status,
+        args.ner_socket.as_deref(),
+        &crate::ner::license_token(),
+    );
 
     let files = collect_files(&args.input)?;
     if files.is_empty() {
@@ -216,8 +233,13 @@ fn sanitize_bytes(
     file_cfg.format = format;
     let doc = parse_bytes(bytes, &file_cfg)?;
     // Detect on the ORIGINAL extracted text so finding offsets align with the
-    // text we hand to `sanitize_text`.
-    let (_engine_redacted, _map, findings) = resolved.scrubber.scrub(&doc.full_text);
+    // text we hand to `sanitize_text`. `scrub_with_detectors` runs the Tier-2
+    // NER sidecar when attached (fail-closed on sidecar failure); with no
+    // detector it is identical to Tier-1 `scrub`.
+    let (_engine_redacted, _map, findings) = resolved
+        .scrubber
+        .scrub_with_detectors(&doc.full_text)
+        .map_err(|e| format!("scrub (NER sidecar reachable?): {e}"))?;
     let text =
         sanitize_text(&doc.full_text, &findings, policy).map_err(|e| format!("sanitize: {e}"))?;
     Ok(Sanitized::Text(text, findings))

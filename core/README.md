@@ -102,7 +102,8 @@ release_batch(slotId);
 | `stream` | no | Async rolling-window sanitizer over `tokio::io` (text/JSON/CSV pipes) |
 | `pdf-redact` | no | PDF sanitization: text-layer redaction + destructive coordinate-aware blackout/flatten via `pdfium-render` (implies `cli-pdf`) |
 | `config` | no | `Bitvanes.toml` user-facing config loader |
-| `pii-model` | no | Tier-2 NER plug-in trait (stub — ONNX integration is future work) |
+| `pii-model` | no | Tier-2 `PiiDetector` trait + in-process `ModelDetector` (kept as a stub — broad-recall NER ships out-of-process, below). |
+| `ner-client` | no | Tier-2 NER **IPC client** for the `bitvanes-nerd` sidecar (local Unix-domain socket). The engine stays ML-free; the model + ONNX Runtime live in `../nerd`. Names/orgs/locations are detected when a paid entitlement is present and the sidecar is running. |
 
 > **Zero-telemetry is unconditional.** Token counting is a pure-arithmetic
 > heuristic (≈ 4 chars/token, no embedded vocab, no network code, no feature
@@ -217,4 +218,7 @@ column.
 
 ## License
 
-Dual-licensed under MIT OR Apache-2.0.
+Proprietary — see [`../LICENSE.md`](../LICENSE.md). Free for internal data
+purification; the source is not open-source. (The bundled NER model under
+`../nerd/models/` retains its upstream Apache-2.0 license — see
+`../nerd/models/MANIFEST.toml`.)

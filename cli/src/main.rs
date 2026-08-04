@@ -9,6 +9,7 @@
 mod daemon;
 mod entitlement;
 mod filter;
+mod ner;
 mod scrub;
 mod shared;
 mod tui;
