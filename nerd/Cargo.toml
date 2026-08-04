@@ -21,17 +21,19 @@ default = []
 # that fails closed (`unavailable`) so the binary builds and the wire contract
 # is exercisable without the model artifact or libonnxruntime. Flip this on
 # once the bundled model + ort integration land.
-model = []
+model = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# ONNX Runtime (dynamic load of libonnxruntime at runtime, mirroring the
-# pdfium pattern — clean build, fail-closed if the native lib is absent).
-# Gated behind `model`; uncomment when wiring real inference:
-# ort = { version = "2", default-features = false, features = ["load-dynamic"] }
-# tokenizers = "0.21"
+# ONNX Runtime + tokenizer, gated behind `model`. `ort` uses `load-dynamic` so
+# the build stays clean — `libonnxruntime` is loaded at runtime (fail-closed if
+# absent), mirroring the pdfium pattern. Set its path via `ORT_DYLIB_PATH`.
+# `ndarray` (0.17, matching ort's pin) enables the TensorRef tensor API.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "ndarray"], optional = true }
+tokenizers = { version = "0.21", optional = true }
+ndarray = { version = "0.17", optional = true }
 
 [lints.rust]
 unsafe_code = "deny"

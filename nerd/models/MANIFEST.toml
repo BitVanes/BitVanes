@@ -1,0 +1,36 @@
+# BitVanes NER model manifest.
+#
+# Single source of truth for the bundled Tier-2 NER model. `scripts/fetch-model.sh`
+# downloads exactly these files at the pinned revision and SHA256-verifies them.
+# The model binaries are .gitignored (fetched at release-prep / dev setup); this
+# manifest is committed so the artifact is reproducible and auditable.
+#
+# Provenance: Xenova/bert-base-NER — a pre-exported ONNX copy of dslim/bert-base-NER
+# (BERT-base cased, fine-tuned on CoNLL-2003 English NER: PER/ORG/LOC/MISC).
+# License: Apache-2.0 (inherits from the upstream model). Compatible with the
+# BitVanes dual MIT/Apache-2.0 license.
+
+model = "Xenova/bert-base-NER"
+revision = "24c7e5aba9ae350923357a6f0b92571be34037ec"
+license = "Apache-2.0"
+metrics = "CoNLL-2003 English (PER/ORG/LOC/MISC)"
+
+# label order MUST match this model's config.json id2label — see
+# nerd/src/ner.rs `CONLL_LABELS`. Changing the model requires updating both.
+id2label = ["O", "B-MISC", "I-MISC", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"]
+
+[[artifact]]
+role = "model"
+filename = "model_quantized.onnx"
+url = "https://huggingface.co/Xenova/bert-base-NER/resolve/24c7e5aba9ae350923357a6f0b92571be34037ec/onnx/model_quantized.onnx"
+sha256 = "caaee70a5518ec7f9e46e5308fcc9263a8c227703a9ce46cf61c69a552349648"
+bytes = 108_952_255
+format = "ONNX (dynamic Int8 quantized via transformers.js)"
+
+[[artifact]]
+role = "tokenizer"
+filename = "tokenizer.json"
+url = "https://huggingface.co/Xenova/bert-base-NER/resolve/24c7e5aba9ae350923357a6f0b92571be34037ec/tokenizer.json"
+sha256 = "343989712a36cd8b253efeaf8baf6a08b9d2583f78e395e83832e8ee9f8d8ee1"
+bytes = 668_923
+format = "HuggingFace fast tokenizer (WordPiece)"

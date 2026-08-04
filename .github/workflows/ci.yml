@@ -21,27 +21,14 @@ env:
   CORE_FEATURES: cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config,ner-client
 
 jobs:
-  fmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    # Non-blocking: the dtolnay/rust-toolchain action's rustfmt build has
-    # historically disagreed with local `rustup` rustfmt (same version string,
-    # different closure-chain canonicalization), making this gate flake between
-    # local and CI. Keep it as a signal, but never block a merge on it. The
-    # blocking gates are clippy + tests in the component jobs below.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.TOOLCHAIN_PIN }}
-          components: rustfmt
-      - run: cargo fmt --all --check
-        working-directory: core
-      - run: cargo fmt --all --check
-        working-directory: cli
-      - run: cargo fmt --all --check
-        working-directory: nerd
+  # NOTE: there is no separate `cargo fmt` job. The `dtolnay/rust-toolchain`
+  # action provisions a rustfmt whose canonicalization diverges from local
+  # `rustup` rustfmt even at identical version strings (different builds), so a
+  # fmt gate was a persistent false-positive between local and CI. Formatting
+  # is enforced locally via `cargo fmt`; the blocking CI gates are clippy
+  # (which subsumes most style issues) + tests in the component jobs below.
+  # If a fmt gate is wanted again, run it inside a pinned container so the
+  # rustfmt binary is identical everywhere.
 
   core:
     name: core (clippy + test)
@@ -107,14 +94,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "nerd -> nerd/target"
-      # The scaffold ships an inference stub that fails closed; no `model`
-      # feature in CI yet (needs the bundled ONNX artifact + libonnxruntime).
+      # Default build: the wire-contract server + entitlement gate; no ML deps.
       - name: Clippy
         working-directory: nerd
         run: cargo clippy --all-targets -- -D warnings
       - name: Build
         working-directory: nerd
         run: cargo build
+      # `model` feature: compile-gate the ort + tokenizers boundary so API
+      # breakage is caught. `ort` uses `load-dynamic` (no native link), so this
+      # compiles cleanly without libonnxruntime on the host. Runtime inference
+      # is exercised separately once the model artifact + libonnxruntime ship.
+      - name: Compile-check the model feature (ort + tokenizers)
+        working-directory: nerd
+        run: cargo check --all-targets --features model
 
   web:
     name: web (typecheck + build)

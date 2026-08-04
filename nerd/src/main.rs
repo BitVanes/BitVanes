@@ -34,6 +34,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+mod ner;
+
+#[cfg(feature = "model")]
+mod inference;
+
 /// 4 GiB hard cap on a single frame so a hostile/buggy peer can't force an
 /// oversized allocation. Matches the engine-side bound.
 const MAX_FRAME: usize = 256 * 1024 * 1024;
@@ -122,13 +127,7 @@ fn check_entitlement(token: &Option<String>) -> Result<(), (&'static str, String
 fn run_inference(_text: &str) -> Result<Vec<NerFinding>, (&'static str, String)> {
     #[cfg(feature = "model")]
     {
-        // TODO(phase-c): ort::Session from the embedded model bytes +
-        // tokenizers::Tokenizer, offset-mapped BIO aggregation, PER/ORG/LOC
-        // slug mapping. Until then, fail closed.
-        Err((
-            "unavailable",
-            "model feature enabled but inference is not wired yet".into(),
-        ))
+        inference::run(_text)
     }
     #[cfg(not(feature = "model"))]
     {

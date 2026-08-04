@@ -32,35 +32,55 @@ license key; free-tier (absent / wrong prefix) is refused with `unentitled`.
 ```bash
 cd nerd
 cargo build                       # scaffold (no model) — fails closed: "unavailable"
-cargo build --features model      # real ONNX inference (once wired + libonnxruntime present)
+cargo build --features model      # real ONNX inference (needs libonnxruntime at runtime)
+
+# Fetch the bundled model (one-time; pinned + SHA256-verified; no Python):
+./scripts/fetch-model.sh          # → models/model_quantized.onnx + models/tokenizer.json
+
 BITVANES_NERD_SOCKET=/tmp/bitvanes-nerd.sock ./target/debug/bitvanes-nerd
 ```
 
 The socket path defaults to `$XDG_RUNTIME_DIR/bitvanes-nerd.sock`
 (or `/tmp/bitvanes-nerd.sock`), overridable via `BITVANES_NERD_SOCKET`.
 
-## Status — scaffold
+## Runtime dependencies (only with `--features model`)
 
-The server, framing, socket I/O, and entitlement gate are real and exercised
-by the engine-side `ner_client` tests. The inference path is a **fail-closed
-stub** (`code = "available"` → `"unavailable"`) until the `model` feature
-wires:
+All local, all pinned, no Python anywhere in the repo or at runtime:
 
-- the bundled Int8 ONNX BERT-NER (`dslm/bert-base-NER`) via `ort` (dynamic
-  `libonnxruntime` load — clean build, fail-closed if the native lib is
-  absent, same pattern as pdfium),
-- `tokenizers` for WordPiece,
-- BIO-tag → byte-offset aggregation (the invariant-critical part),
-- PER/ORG/LOC → `person_name`/`organization`/`location` slug mapping.
+- **The model + tokenizer** — fetched by `scripts/fetch-model.sh` (pure shell +
+  curl + sha256) from `Xenova/bert-base-NER` at a pinned commit, SHA256-verified
+  against `models/MANIFEST.toml`. Loaded by nerd from `models/` (or
+  `$BITVANES_NER_MODEL` / `$BITVANES_NER_TOKENIZER`). Ship them in the release
+  tarball next to the binary.
+- **`libonnxruntime`** — the ONNX Runtime C engine; loaded dynamically via
+  `$ORT_DYLIB_PATH`. Absent ⇒ fail-closed `unavailable` (same pattern as
+  `libpdfium`). Ship it in the release tarball.
 
-Until then, `nerd` running without `--features model` is a deliberate
-no-op: the engine's `scrub_with_detectors` gets `Inference` and refuses to
-emit text the detector would have scrubbed. **Fail-closed by construction.**
+Nothing else. No network calls at runtime, no Python on the host, no telemetry.
+
+## Status
+
+The server, framing, socket I/O, entitlement gate, and the **full NER
+post-processing pipeline** (`nerd/src/ner.rs` — BIO aggregation, subword→word
+merging, byte-offset validation, entity-slug mapping) are real and unit-tested
+(23 tests) without any model.
+
+The **ONNX inference boundary** (`nerd/src/inference.rs`, behind `--features
+model`) is wired and **compile-verified** against `ort` 2.0.0-rc.13 +
+`tokenizers` 0.21: lazy-loads the model + tokenizer, tokenizes with offset +
+word-id tracking, runs the model, argmaxes per-token logits, and feeds the
+result through the pure `ner` pipeline. Runtime behavior — that the model's
+output head matches `CONLL_LABELS` and the tokenizer's offsets are
+byte-accurate — is gated on the model artifact + `libonnxruntime` being
+present, and is exercised by a runtime test once those ship.
+
+Until then, `nerd` running without the model artifact (or without
+`--features model`) is a deliberate no-op: the engine's
+`scrub_with_detectors` gets `Inference` and refuses to emit text the detector
+would have scrubbed. **Fail-closed by construction.**
 
 ## Runtime dependencies
 
-- `libonnxruntime` on the host when built with `--features model` (runtime,
-  not build-time — mirrors `libpdfium`). Bundled into the release tarball.
-- The model artifact (Int8 ONNX + tokenizer.json) — to be bundled; a Python
-  export script (`scripts/export_ner_model.py`) produces it from the HuggingFace
-  source. Until then the `model` feature errors at first inference.
+See "Runtime dependencies" under Build & run above — model fetched via
+`scripts/fetch-model.sh`, `libonnxruntime` via `ORT_DYLIB_PATH`. Both ship in
+the release tarball; nothing is fetched or run from the network at runtime.
