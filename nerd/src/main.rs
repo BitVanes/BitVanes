@@ -34,6 +34,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+mod ner;
+
 /// 4 GiB hard cap on a single frame so a hostile/buggy peer can't force an
 /// oversized allocation. Matches the engine-side bound.
 const MAX_FRAME: usize = 256 * 1024 * 1024;
