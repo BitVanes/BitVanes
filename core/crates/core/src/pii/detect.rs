@@ -60,10 +60,13 @@
 //! | GitHubPat     | `[GITHUB_PAT]`    | none               |
 //! | Jwt           | `[JWT]`           | none               |
 
+use std::sync::Arc;
+
 use regex::Regex;
 
 use crate::error::{BitVanesError, Result};
 use crate::parse::{Document, offset_to_u32};
+use crate::pii::model::PiiDetector;
 use crate::schema::{BuiltInPattern, ScrubProfile};
 
 // ===========================================================================
@@ -759,7 +762,9 @@ const GENERIC_GIVEN_NAMES: &[&str] = &[
 /// A compiled PII scrubber. Built once from a [`ScrubProfile`] and applied
 /// to many documents (or document chunks) without recompilation.
 ///
-/// Cloning is cheap (regexes use `Arc` internally).
+/// Cloning is cheap (regexes use `Arc` internally). Tier-2 ML detectors are
+/// held behind [`Arc`] so a loaded model is shared across clones (e.g. across
+/// a rayon batch) rather than re-loaded per thread.
 #[derive(Debug, Clone)]
 pub struct Scrubber {
     patterns: Vec<CompiledPattern>,
@@ -770,6 +775,10 @@ pub struct Scrubber {
     /// Optional Tier-2 personal-name gazetteer (user names + optionally the
     /// bundled generic list). `None` when no names are configured.
     name_gazetteer: Option<NameGazetteer>,
+    /// Tier-2 ML detectors (NER model, ...). Empty by default. When present,
+    /// callers MUST use [`Scrubber::scrub_with_detectors`] (fail-closed) —
+    /// [`Scrubber::scrub`] runs Tier-1 only and will NOT consult these.
+    detectors: Vec<Arc<dyn PiiDetector>>,
 }
 
 #[derive(Debug, Clone)]
@@ -909,6 +918,7 @@ impl Scrubber {
             min_confidence: profile.min_confidence,
             report_only: profile.report_only.iter().cloned().collect(),
             name_gazetteer: build_name_gazetteer(&profile.names, profile.use_generic_names)?,
+            detectors: Vec::new(),
         })
     }
 
@@ -918,9 +928,42 @@ impl Scrubber {
         self.patterns.is_empty()
     }
 
-    /// Scrubs `text`: finds all PII matches, runs algorithmic verification
-    /// (Luhn / ABA), scans the contextual anchor window, computes confidence
-    /// scores, resolves overlaps, and builds the redacted output.
+    /// Attaches Tier-2 ML detectors (NER model, ...). The caller owns
+    /// construction (e.g. the CLI wires a [`crate::pii::model::RemoteNerClient`]
+    /// pointing at the `bitvanes-nerd` sidecar). When detectors are present,
+    /// callers MUST use [`Scrubber::scrub_with_detectors`] — [`Scrubber::scrub`]
+    /// runs Tier-1 only and will not consult them.
+    #[must_use]
+    pub fn with_detectors(mut self, detectors: Vec<Arc<dyn PiiDetector>>) -> Self {
+        self.detectors = detectors;
+        self
+    }
+
+    /// Returns `true` when Tier-2 ML detectors are configured.
+    #[must_use]
+    pub fn has_detectors(&self) -> bool {
+        !self.detectors.is_empty()
+    }
+
+    /// Tier-1 + gazetteer matches only. Shared by [`Scrubber::scrub`] and
+    /// [`Scrubber::scrub_with_detectors`] so the two paths cannot drift.
+    fn tier1_matches(&self, text: &str) -> Vec<PiiMatch> {
+        let mut matches = self.find_matches(text);
+        // Tier-2 gazetteer: personal-name list. Appended to the Tier-1 match
+        // list before overlap resolution so a name spanning a regex match is
+        // resolved deterministically (greedy earliest-end scheduling).
+        if let Some(gaz) = &self.name_gazetteer {
+            matches.extend(self.find_name_matches(text, gaz));
+        }
+        matches
+    }
+
+    /// Scrubs `text` with the **Tier-1 engine only** (regex + Luhn/ABA + anchor
+    /// window + optional name gazetteer): finds all matches, computes
+    /// confidence, resolves overlaps, and builds the redacted output.
+    ///
+    /// Does NOT consult any configured Tier-2 ML detectors — use
+    /// [`Scrubber::scrub_with_detectors`] for the fail-closed ML path.
     ///
     /// Returns `(scrubbed_text, offset_map, findings)`. Findings carry
     /// offsets into the **original** text.
@@ -930,15 +973,43 @@ impl Scrubber {
             return (text.to_string(), OffsetMap::default(), Vec::new());
         }
 
-        let mut matches = self.find_matches(text);
-        // Tier-2: personal-name gazetteer. Appended to the Tier-1 match list
-        // before overlap resolution so a name spanning a regex match is
-        // resolved deterministically (greedy earliest-end scheduling).
-        if let Some(gaz) = &self.name_gazetteer {
-            matches.extend(self.find_name_matches(text, gaz));
-        }
-        let resolved = resolve_overlaps(matches);
+        let resolved = resolve_overlaps(self.tier1_matches(text));
         build_scrubbed(text, &resolved)
+    }
+
+    /// Scrubs `text` with Tier-1 **plus** every configured Tier-2 ML detector
+    /// (NER model, ...). Detector findings are merged into the Tier-1 match
+    /// list before overlap resolution, so the pipeline contract is unchanged:
+    /// one finding list, one offset map, one `pii_metadata` column.
+    ///
+    /// **Fail-closed:** if any detector returns an error (sidecar down, model
+    /// load failure, inference error), this returns [`BitVanesError::Inference`]
+    /// rather than emitting text that may contain PII the detector would have
+    /// caught.
+    ///
+    /// # Errors
+    ///
+    /// - [`BitVanesError::Inference`] — a detector failed to load or run.
+    pub fn scrub_with_detectors(&self, text: &str) -> Result<(String, OffsetMap, Vec<PiiFinding>)> {
+        if text.is_empty() {
+            return Ok((String::new(), OffsetMap::default(), Vec::new()));
+        }
+
+        let mut matches = self.tier1_matches(text);
+        for detector in &self.detectors {
+            let mut findings = Vec::new();
+            detector
+                .detect(text, &mut findings)
+                .map_err(|e| BitVanesError::Inference(e.to_string()))?;
+            for finding in findings {
+                if let Some(pm) = detector_finding_to_match(text, finding, &self.report_only) {
+                    matches.push(pm);
+                }
+            }
+        }
+
+        let resolved = resolve_overlaps(matches);
+        Ok(build_scrubbed(text, &resolved))
     }
 
     /// Runs all patterns against `text` and returns raw (pre-overlap-resolution)
@@ -1063,6 +1134,58 @@ struct PiiMatch {
     /// If true, the finding is recorded but the original text is NOT replaced.
     report_only: bool,
     finding: PiiFinding,
+}
+
+/// Replacement token emitted for each Tier-2 NER entity slug. Unknown slugs
+/// fall through to report-only (recorded but not replaced) — safer than
+/// blindly rewriting text for an entity the engine does not understand.
+///
+/// Mirrors the Tier-1 `[EMAIL]` / `[SSN]` / `[NAME]` convention.
+fn ner_replacement(entity_slug: &str) -> Option<(&'static str, bool)> {
+    match entity_slug {
+        "person_name" => Some(("[PERSON]", false)),
+        "organization" => Some(("[ORGANIZATION]", false)),
+        "location" => Some(("[LOCATION]", false)),
+        "misc_entity" => Some(("[MISC]", false)),
+        // Unknown Tier-2 slug: record the finding, do not replace the text.
+        _ => None,
+    }
+}
+
+/// Converts a Tier-2 detector [`PiiFinding`] into a [`PiiMatch`] for the
+/// overlap resolver. Returns `None` if the detector emitted an invalid span
+/// (out of range, not on a UTF-8 boundary, or empty) — invalid spans are
+/// dropped defensively rather than risking a wrong-byte redaction.
+fn detector_finding_to_match(
+    text: &str,
+    finding: PiiFinding,
+    report_only_global: &std::collections::HashSet<String>,
+) -> Option<PiiMatch> {
+    let start = usize::try_from(finding.offset_start).ok()?;
+    let end = usize::try_from(finding.offset_end).ok()?;
+    if start >= end || end > text.len() {
+        return None;
+    }
+    // Offsets are byte offsets; both bounds must land on a UTF-8 char boundary
+    // or slicing will panic. A detector that emits mid-codepoint offsets is
+    // buggy — drop the finding.
+    if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+        return None;
+    }
+
+    // Known NER slug → redact; unknown slug → report-only (keep original text,
+    // still record the finding). `report_only_global` additionally forces
+    // report-only for any entity the user flagged `report_only` in config.
+    let (replacement, report_only_entity) = ner_replacement(&finding.entity).unwrap_or(("", true));
+    let report_only = report_only_entity || report_only_global.contains(finding.entity.as_str());
+
+    Some(PiiMatch {
+        start,
+        end,
+        replacement: replacement.to_string(),
+        report_only,
+        finding,
+    })
 }
 
 /// Resolves overlapping matches using greedy interval scheduling (earliest
@@ -1469,6 +1592,166 @@ mod tests {
         })
         .expect("built-in patterns should compile");
         scrubber.scrub(text)
+    }
+
+    // ----- Tier-2 (PiiDetector) wiring tests -----
+    //
+    // A fake detector stands in for the real `bitvanes-nerd` sidecar client
+    // so the wiring can be verified without the ONNX model / runtime.
+
+    #[derive(Debug)]
+    struct FakeNer {
+        findings: Vec<PiiFinding>,
+        fail: bool,
+    }
+
+    impl PiiDetector for FakeNer {
+        fn detect(&self, _text: &str, out: &mut Vec<PiiFinding>) -> Result<()> {
+            if self.fail {
+                return Err(BitVanesError::Inference("fake detector is down".into()));
+            }
+            out.extend(self.findings.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn scrub_with_detectors_redacts_ner_finding() {
+        let text = "Contact alice@example.com or ask Alice Smith today.";
+        let name_start = text.find("Alice Smith").expect("name present");
+        let name_end = name_start + "Alice Smith".len();
+        let detector = FakeNer {
+            findings: vec![PiiFinding {
+                entity: "person_name".to_string(),
+                offset_start: offset_to_u32(name_start),
+                offset_end: offset_to_u32(name_end),
+                confidence: 0.99,
+                anchors_hit: vec![],
+            }],
+            fail: false,
+        };
+        let scrubber = Scrubber::from_profile(&ScrubProfile {
+            patterns: vec![BuiltInPattern::Email],
+            ..ScrubProfile::default()
+        })
+        .expect("patterns compile")
+        .with_detectors(vec![Arc::new(detector)]);
+
+        let (out, _map, findings) = scrubber.scrub_with_detectors(text).expect("detector ok");
+
+        assert!(out.contains("[EMAIL]"), "Tier-1 email redaction: {out}");
+        assert!(out.contains("[PERSON]"), "Tier-2 name redaction: {out}");
+        assert!(!out.contains("Alice"), "name must not survive: {out}");
+        let entities: Vec<&str> = findings.iter().map(|f| f.entity.as_str()).collect();
+        assert!(entities.contains(&"email"), "email finding recorded");
+        assert!(
+            entities.contains(&"person_name"),
+            "person_name finding recorded"
+        );
+    }
+
+    #[test]
+    fn scrub_with_detectors_is_fail_closed_on_error() {
+        // If a detector errors (sidecar down / model fault), the pipeline MUST
+        // refuse to emit output rather than risk leaking PII the detector
+        // would have caught.
+        let text = "alice@example.com";
+        let scrubber = Scrubber::from_profile(&ScrubProfile {
+            patterns: vec![BuiltInPattern::Email],
+            ..ScrubProfile::default()
+        })
+        .expect("patterns compile")
+        .with_detectors(vec![Arc::new(FakeNer {
+            findings: vec![],
+            fail: true,
+        })]);
+
+        let err = scrubber
+            .scrub_with_detectors(text)
+            .expect_err("must fail closed");
+        assert!(
+            matches!(err, BitVanesError::Inference(_)),
+            "expected Inference error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn scrub_with_detectors_drops_invalid_spans_without_panicking() {
+        // A buggy detector could emit out-of-range or empty spans; they must
+        // be dropped defensively rather than panic or redact wrong bytes.
+        let text = "ask Alice now"; // ASCII; "Alice" at 4..9
+        let valid_start = text.find("Alice").expect("name present");
+        let valid_end = valid_start + "Alice".len();
+        let detector = FakeNer {
+            findings: vec![
+                PiiFinding {
+                    entity: "person_name".to_string(),
+                    offset_start: offset_to_u32(valid_start),
+                    offset_end: offset_to_u32(valid_end),
+                    confidence: 0.9,
+                    anchors_hit: vec![],
+                },
+                PiiFinding {
+                    entity: "person_name".to_string(),
+                    offset_start: 9000,
+                    offset_end: 9999,
+                    confidence: 0.9,
+                    anchors_hit: vec![],
+                },
+                PiiFinding {
+                    entity: "person_name".to_string(),
+                    offset_start: offset_to_u32(valid_start),
+                    offset_end: offset_to_u32(valid_start), // empty span
+                    confidence: 0.9,
+                    anchors_hit: vec![],
+                },
+            ],
+            fail: false,
+        };
+        let scrubber = Scrubber::from_profile(&ScrubProfile::default())
+            .expect("default profile compiles")
+            .with_detectors(vec![Arc::new(detector)]);
+
+        let (out, _map, findings) = scrubber.scrub_with_detectors(text).expect("detector ok");
+        assert!(
+            out.contains("[PERSON]"),
+            "valid finding still applied: {out}"
+        );
+        assert!(!out.contains("Alice"), "valid name redacted: {out}");
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the valid span survives; invalid ones dropped"
+        );
+    }
+
+    #[test]
+    fn scrub_tier1_only_does_not_consult_detectors() {
+        // Documents the contract: scrub() is the infallible Tier-1 path and
+        // never invokes ML detectors. Callers wanting NER must use
+        // scrub_with_detectors (fail-closed).
+        let text = "ask Alice Smith";
+        let name_start = text.find("Alice Smith").expect("name present");
+        let name_end = name_start + "Alice Smith".len();
+        let scrubber = Scrubber::from_profile(&ScrubProfile::default())
+            .expect("default profile compiles")
+            .with_detectors(vec![Arc::new(FakeNer {
+                findings: vec![PiiFinding {
+                    entity: "person_name".to_string(),
+                    offset_start: offset_to_u32(name_start),
+                    offset_end: offset_to_u32(name_end),
+                    confidence: 0.99,
+                    anchors_hit: vec![],
+                }],
+                fail: false,
+            })]);
+
+        let (out, _map, findings) = scrubber.scrub(text);
+        assert!(out.contains("Alice Smith"), "detector not consulted: {out}");
+        assert!(
+            findings.is_empty(),
+            "no Tier-1 findings, no detector findings"
+        );
     }
 
     // ----- Built-in pattern tests -----

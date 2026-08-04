@@ -62,6 +62,13 @@ config = ["dep:toml"]
 # until the ONNX integration lands. Native-only.
 pii-model = []
 
+# Tier-2 NER *client*: IPC client + wire contract for the `bitvanes-nerd`
+# sidecar over a local socket (Unix domain socket on Unix; Windows named
+# pipe lands next). Adds NO ML deps — the engine stays ML-free; inference
+# runs in the sidecar. The sidecar enforces the license token offline so
+# free-tier use is refused at the point where the model actually runs.
+ner-client = []
+
 [lints]
 workspace = true
 

@@ -184,11 +184,12 @@ struct SimpleFinding {
 /// A JS object `{ redacted: string, findings: [{entity, offset_start, offset_end, confidence}] }`.
 #[wasm_bindgen]
 pub fn quick_scrub(text: &str, rules_js: JsValue) -> Result<JsValue, JsValue> {
+    use bitvanes_core::schema::BuiltInPattern;
+
     let rules: Vec<String> = serde_wasm_bindgen::from_value(rules_js)
         .map_err(|e| JsValue::from_str(&format!("rules parse failed: {e}")))?;
 
     // Build a ScrubProfile from the requested rule slugs.
-    use bitvanes_core::schema::BuiltInPattern;
     let mut patterns = Vec::new();
     for slug in &rules {
         let parsed = serde_json::from_str::<BuiltInPattern>(&format!("\"{}\"", slug.trim()));

@@ -38,8 +38,10 @@ use crate::pii::detect::PiiFinding;
 /// pipeline merges them with Tier-1 results and resolves overlaps.
 ///
 /// `Send + Sync` is required so the detector can run on a rayon thread pool
-/// in the CLI's batch path.
-pub trait PiiDetector: Send + Sync {
+/// in the CLI's batch path. [`Debug`](std::fmt::Debug) is required so a
+/// holding [`Scrubber`](crate::pii::Scrubber) can be debug-formatted (e.g.
+/// to log which detector failed in a fail-closed error path).
+pub trait PiiDetector: Send + Sync + std::fmt::Debug {
     /// Scans `text` and appends any detected findings to `findings`.
     ///
     /// Findings MUST carry offsets into the same `text` (original-text
@@ -123,6 +125,7 @@ mod tests {
     fn noop_detector_impl_works() {
         // A trivial no-op detector proves the trait is object-safe and
         // composable with the pipeline without needing the ONNX feature.
+        #[derive(Debug)]
         struct Noop;
         impl PiiDetector for Noop {
             fn detect(&self, _text: &str, findings: &mut Vec<PiiFinding>) -> Result<()> {

@@ -1,0 +1,37 @@
+[package]
+name = "bitvanes-nerd"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "BitVanes Tier-2 NER sidecar — serves named-entity detection to the engine over a local socket. The model + ONNX Runtime live here; the engine stays ML-free."
+repository = "https://github.com/BitVanes/BitVanes"
+homepage = "https://bitvanes.com"
+keywords = ["pii", "ner", "redaction", "privacy", "onnx"]
+categories = ["command-line-utilities", "text-processing"]
+readme = "README.md"
+
+[[bin]]
+name = "bitvanes-nerd"
+path = "src/main.rs"
+
+[features]
+default = []
+# Real ONNX inference. Off by default — the scaffold ships an inference stub
+# that fails closed (`unavailable`) so the binary builds and the wire contract
+# is exercisable without the model artifact or libonnxruntime. Flip this on
+# once the bundled model + ort integration land.
+model = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ONNX Runtime (dynamic load of libonnxruntime at runtime, mirroring the
+# pdfium pattern — clean build, fail-closed if the native lib is absent).
+# Gated behind `model`; uncomment when wiring real inference:
+# ort = { version = "2", default-features = false, features = ["load-dynamic"] }
+# tokenizers = "0.21"
+
+[lints.rust]
+unsafe_code = "deny"
