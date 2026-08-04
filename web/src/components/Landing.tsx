@@ -38,17 +38,15 @@ function Nav({ onOpenDashboard }: { onOpenDashboard: () => void }) {
         Bit<span style={{ color: 'var(--accent)' }}>Vanes</span>
       </a>
       <div className="nav-links">
+        <a href="#demo">Live demo</a>
         <a href="#how">How it works</a>
         <a href="#pricing">Pricing</a>
         <a href={REPO} target="_blank" rel="noreferrer">
           GitHub
         </a>
-        <a href={RELEASES} target="_blank" rel="noreferrer">
+        <a className="btn-primary btn-sm" href={RELEASES} target="_blank" rel="noreferrer">
           Download
         </a>
-        <button className="btn-primary btn-sm" onClick={onOpenDashboard}>
-          Launch Dashboard →
-        </button>
       </div>
     </nav>
   );
