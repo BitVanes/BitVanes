@@ -39,23 +39,26 @@ BITVANES_NERD_SOCKET=/tmp/bitvanes-nerd.sock ./target/debug/bitvanes-nerd
 The socket path defaults to `$XDG_RUNTIME_DIR/bitvanes-nerd.sock`
 (or `/tmp/bitvanes-nerd.sock`), overridable via `BITVANES_NERD_SOCKET`.
 
-## Status — scaffold
+## Status
 
-The server, framing, socket I/O, and entitlement gate are real and exercised
-by the engine-side `ner_client` tests. The inference path is a **fail-closed
-stub** (`code = "available"` → `"unavailable"`) until the `model` feature
-wires:
+The server, framing, socket I/O, entitlement gate, and the **full NER
+post-processing pipeline** (`nerd/src/ner.rs` — BIO aggregation, subword→word
+merging, byte-offset validation, entity-slug mapping) are real and unit-tested
+(23 tests) without any model.
 
-- the bundled Int8 ONNX BERT-NER (`dslm/bert-base-NER`) via `ort` (dynamic
-  `libonnxruntime` load — clean build, fail-closed if the native lib is
-  absent, same pattern as pdfium),
-- `tokenizers` for WordPiece,
-- BIO-tag → byte-offset aggregation (the invariant-critical part),
-- PER/ORG/LOC → `person_name`/`organization`/`location` slug mapping.
+The **ONNX inference boundary** (`nerd/src/inference.rs`, behind `--features
+model`) is wired and **compile-verified** against `ort` 2.0.0-rc.13 +
+`tokenizers` 0.21: lazy-loads the model + tokenizer, tokenizes with offset +
+word-id tracking, runs the model, argmaxes per-token logits, and feeds the
+result through the pure `ner` pipeline. Runtime behavior — that the model's
+output head matches `CONLL_LABELS` and the tokenizer's offsets are
+byte-accurate — is gated on the model artifact + `libonnxruntime` being
+present, and is exercised by a runtime test once those ship.
 
-Until then, `nerd` running without `--features model` is a deliberate
-no-op: the engine's `scrub_with_detectors` gets `Inference` and refuses to
-emit text the detector would have scrubbed. **Fail-closed by construction.**
+Until then, `nerd` running without the model artifact (or without
+`--features model`) is a deliberate no-op: the engine's
+`scrub_with_detectors` gets `Inference` and refuses to emit text the detector
+would have scrubbed. **Fail-closed by construction.**
 
 ## Runtime dependencies
 

@@ -107,14 +107,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "nerd -> nerd/target"
-      # The scaffold ships an inference stub that fails closed; no `model`
-      # feature in CI yet (needs the bundled ONNX artifact + libonnxruntime).
+      # Default build: the wire-contract server + entitlement gate; no ML deps.
       - name: Clippy
         working-directory: nerd
         run: cargo clippy --all-targets -- -D warnings
       - name: Build
         working-directory: nerd
         run: cargo build
+      # `model` feature: compile-gate the ort + tokenizers boundary so API
+      # breakage is caught. `ort` uses `load-dynamic` (no native link), so this
+      # compiles cleanly without libonnxruntime on the host. Runtime inference
+      # is exercised separately once the model artifact + libonnxruntime ship.
+      - name: Compile-check the model feature (ort + tokenizers)
+        working-directory: nerd
+        run: cargo check --all-targets --features model
 
   web:
     name: web (typecheck + build)
