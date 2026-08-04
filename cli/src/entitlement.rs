@@ -115,6 +115,15 @@ impl EntitlementStatus {
         self.is_pro_or_above()
     }
 
+    /// `true` if the Tier-2 NER sidecar (`bitvanes-nerd`) may be attached.
+    /// NER is a paid feature — the free / open-source tier never gets name
+    /// detection, enforced both here (CLI) and again inside the sidecar (which
+    /// verifies the license token offline before running the model).
+    #[must_use]
+    pub fn allows_ner(&self) -> bool {
+        self.is_pro_or_above()
+    }
+
     /// Short human-readable label for logs / `/health`.
     #[must_use]
     pub fn label(&self) -> String {

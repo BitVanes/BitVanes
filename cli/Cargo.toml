@@ -3,7 +3,7 @@ name = "bitvanes-cli"
 version = "1.0.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT OR Apache-2.0"
+license-file = "../LICENSE.md"
 description = "BitVanes CLI — zero-trust local PII purification (scrub, filter, daemon)."
 repository = "https://github.com/BitVanes/cli"
 homepage = "https://bitvanes.com"
@@ -25,7 +25,7 @@ dashboard = ["dep:rust-embed"]
 # The CLI links `bitvanes-core` via a path dependency so the three repos move
 # in lockstep during development. Published release binaries are built from a
 # pinned tag of this monorepo layout (core/cli/web under one parent dir).
-bitvanes-core = { path = "../core/crates/core", features = ["ipc", "csv", "cli-pdf", "parallel", "office", "mmap", "stream", "config", "pdf-redact"] }
+bitvanes-core = { path = "../core/crates/core", features = ["ipc", "csv", "cli-pdf", "parallel", "office", "mmap", "stream", "config", "pdf-redact", "ner-client"] }
 axum = "0.7"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
