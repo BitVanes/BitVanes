@@ -14,5 +14,11 @@
 pub mod detect;
 pub mod model;
 
+#[cfg(feature = "ner-client")]
+pub mod ner_client;
+
 pub use detect::{OffsetMap, PiiFinding, Scrubber, scrub_document, scrub_text};
 pub use model::{ModelDetector, PiiDetector};
+
+#[cfg(feature = "ner-client")]
+pub use ner_client::{DetectOutcome, DetectRequest, LocalTransport, NerFinding, RemoteNerClient};

@@ -10,8 +10,9 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   # Full native feature set (excludes `pii-model`, whose ModelDetector is an
-  # `unimplemented!()` stub by design).
-  CORE_FEATURES: cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config
+  # `unimplemented!()` stub by design). `ner-client` is included so the NER
+  # sidecar IPC client + its socket tests are exercised every run.
+  CORE_FEATURES: cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config,ner-client
 
 jobs:
   fmt:
@@ -26,6 +27,8 @@ jobs:
         working-directory: core
       - run: cargo fmt --all --check
         working-directory: cli
+      - run: cargo fmt --all --check
+        working-directory: nerd
 
   core:
     name: core (clippy + test)
@@ -76,6 +79,26 @@ jobs:
           printf 'mail alice@example.com or 123-45-6789\n' > /tmp/t.txt
           ./target/release/bitvanes scrub /tmp/t.txt --out - --rules email,ssn
           ./target/release/bitvanes --version
+
+  nerd:
+    name: nerd (clippy + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "nerd -> nerd/target"
+      # The scaffold ships an inference stub that fails closed; no `model`
+      # feature in CI yet (needs the bundled ONNX artifact + libonnxruntime).
+      - name: Clippy
+        working-directory: nerd
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Build
+        working-directory: nerd
+        run: cargo build
 
   web:
     name: web (typecheck + build)

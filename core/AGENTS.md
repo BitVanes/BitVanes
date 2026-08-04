@@ -7,9 +7,9 @@ Build commands for the `bitvanes-core` workspace.
 ```bash
 cargo fmt --check
 cargo clippy --workspace --all-targets \
-  --features cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config -- -D warnings
+  --features cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config,ner-client -- -D warnings
 cargo test --workspace \
-  --features cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config
+  --features cli-pdf,parallel,ipc,csv,office,mmap,stream,pdf-redact,config,ner-client
 ```
 
 > Do **not** use `--all-features`: `pii-model` enables an `unimplemented!()`
@@ -23,7 +23,7 @@ gzip -c crates/wasm/pkg/bitvanes_wasm_bg.wasm | wc -c
 ```
 
 The web dashboard no longer uses this — it talks to the native daemon. The
-wasm crate is retained as a legacy embedding surface.
+wasm crate is retained as a legacy FFI binding.
 
 ## Feature flags
 
@@ -38,6 +38,10 @@ wasm crate is retained as a legacy embedding surface.
   coordinate-aware blackout/flatten via runtime `pdfium-render` (implies
   `cli-pdf`). Fails closed (`FeatureNotEnabled`) if `libpdfium` is absent.
 - `config`: `Bitvanes.toml` user-facing config loader.
+- `ner-client`: Tier-2 NER IPC client + wire contract for the `bitvanes-nerd`
+  sidecar (local Unix-domain socket). Adds NO ML deps — the engine stays
+  ML-free; inference runs in `nerd/`. The sidecar enforces the license token
+  offline so free-tier use is refused.
 - `pii-model`: Tier-2 NER trait + `ModelDetector` **stub** (`unimplemented!()`).
 
 Token counting uses a pure-arithmetic **chars-per-token heuristic** (no BPE

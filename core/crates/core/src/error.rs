@@ -29,6 +29,13 @@ pub enum BitVanesError {
     #[error("feature not enabled: {0}")]
     FeatureNotEnabled(Box<str>),
 
+    /// A Tier-2 detector (e.g. the NER model) failed to load or run
+    /// inference. Treated as **fail-closed**: if a configured detector cannot
+    /// run, the pipeline refuses to emit output rather than risk leaking PII
+    /// that the detector would have caught.
+    #[error("pii detector inference failure: {0}")]
+    Inference(String),
+
     /// An error from the underlying Apache Arrow library while building or
     /// exporting a [`RecordBatch`](arrow::record_batch::RecordBatch).
     #[error("arrow error: {0}")]
