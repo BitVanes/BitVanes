@@ -1,0 +1,5 @@
+# The model artifacts are fetched via scripts/fetch-model.sh (pinned in
+# models/MANIFEST.toml). They are build/release artifacts, not source — keep
+# them out of git. The manifest itself IS committed.
+/models/*.onnx
+/models/tokenizer.json

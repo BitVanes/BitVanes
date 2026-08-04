@@ -55,7 +55,7 @@ static MODEL: OnceLock<Option<LoadedModel>> = OnceLock::new();
 fn model_path() -> Option<PathBuf> {
     std::env::var_os("BITVANES_NER_MODEL")
         .map(PathBuf::from)
-        .or_else(|| default_artifact("bert-base-ner-int8.onnx"))
+        .or_else(|| default_artifact("model_quantized.onnx"))
 }
 
 /// Resolve the tokenizer path from `BITVANES_NER_TOKENIZER` or the default.
@@ -241,5 +241,50 @@ mod tests {
         let (id, conf) = softmax_argmax(std::iter::empty::<f32>());
         assert_eq!(id, 0);
         assert_eq!(conf, 0.0);
+    }
+
+    /// End-to-end runtime test: runs the REAL model against the REAL ONNX
+    /// Runtime, asserting a person name is detected. Skipped unless the model
+    /// artifact is pointed at via `BITVANES_NER_MODEL` + `BITVANES_NER_TOKENIZER`
+    /// (and libonnxruntime is loadable via `ORT_DYLIB_PATH`). Run with:
+    ///   cargo test --features model inference_finds_a_person -- --ignored --nocapture
+    #[test]
+    #[ignore = "needs the model artifact + libonnxruntime"]
+    fn inference_finds_a_person() {
+        let (Ok(model_path), Ok(tok_path)) = (
+            std::env::var("BITVANES_NER_MODEL"),
+            std::env::var("BITVANES_NER_TOKENIZER"),
+        ) else {
+            eprintln!("skipped: BITVANES_NER_MODEL / BITVANES_NER_TOKENIZER not set");
+            return;
+        };
+        if !std::path::Path::new(&model_path).exists() {
+            eprintln!("skipped: model not found at {model_path}");
+            return;
+        }
+
+        let text = "Please reach Alice Smith about the contract.";
+        let findings = run(text).unwrap_or_else(|e| panic!("inference failed: {e:?}"));
+        eprintln!("findings: {findings:?}");
+        let has_person = findings
+            .iter()
+            .any(|f| f.entity == "person_name");
+        assert!(has_person, "expected a person_name finding; got {findings:?}");
+
+        // The person finding's byte span must point at "Alice" (or cover it)
+        // in the original text — the offset invariant, verified for real.
+        let person = findings
+            .iter()
+            .find(|f| f.entity == "person_name")
+            .expect("a person finding");
+        let s = usize::try_from(person.start).unwrap();
+        let e = usize::try_from(person.end).unwrap();
+        let span = &text[s..e];
+        assert!(
+            span.contains("Alice") || span.contains("Smith"),
+            "person span must cover the name; got {span:?}"
+        );
+        eprintln!("OK: person span = {span:?} at [{s}..{e}]");
+        let _ = tok_path;
     }
 }

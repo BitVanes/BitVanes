@@ -124,11 +124,15 @@ pub(crate) struct RawToken {
     pub word_id: Option<u32>,
 }
 
-/// ConLL-2003 label order used by the `dslim/bert-base-NER` output head. The
-/// inference boundary MUST map model logits onto this order (or read the
-/// model's `id2label` and adapt); a mismatch is a silent recall bug.
+/// Label-index → ConLL string map. MUST match the bundled model's
+/// `config.json` `id2label`. Current model: `Xenova/bert-base-NER`
+/// @ `24c7e5ab`, whose output head orders MISC before PER/ORG/LOC — NOT the
+/// textbook ConLL order. A mismatch here silently mislabels every finding
+/// (verified the hard way via the runtime test). The inference boundary
+/// argmaxes logits against this; a future model swap must update this (or
+/// load `id2label` from config dynamically).
 pub(crate) const CONLL_LABELS: [&str; 9] = [
-    "O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC", "B-MISC", "I-MISC",
+    "O", "B-MISC", "I-MISC", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC",
 ];
 
 /// Map a model label id to a [`Tag`] via [`CONLL_LABELS`]. Out-of-range ids
@@ -526,12 +530,17 @@ mod tests {
 
     #[test]
     fn label_id_maps_to_conll_tags() {
+        // Order MUST match CONLL_LABELS (the bundled Xenova/bert-base-NER
+        // config.json id2label): O, B-MISC, I-MISC, B-PER, I-PER, B-ORG, ...
         assert_eq!(label_id_to_tag(0), Tag::Outside);
-        assert_eq!(label_id_to_tag(1), Tag::Begin(Entity::Per));
-        assert_eq!(label_id_to_tag(2), Tag::Inside(Entity::Per));
-        assert_eq!(label_id_to_tag(3), Tag::Begin(Entity::Org));
-        assert_eq!(label_id_to_tag(4), Tag::Inside(Entity::Org));
-        assert_eq!(label_id_to_tag(7), Tag::Begin(Entity::Misc));
+        assert_eq!(label_id_to_tag(1), Tag::Begin(Entity::Misc));
+        assert_eq!(label_id_to_tag(2), Tag::Inside(Entity::Misc));
+        assert_eq!(label_id_to_tag(3), Tag::Begin(Entity::Per));
+        assert_eq!(label_id_to_tag(4), Tag::Inside(Entity::Per));
+        assert_eq!(label_id_to_tag(5), Tag::Begin(Entity::Org));
+        assert_eq!(label_id_to_tag(6), Tag::Inside(Entity::Org));
+        assert_eq!(label_id_to_tag(7), Tag::Begin(Entity::Loc));
+        assert_eq!(label_id_to_tag(8), Tag::Inside(Entity::Loc));
         assert_eq!(label_id_to_tag(99), Tag::Outside, "out-of-range is fail-safe");
         assert_eq!(label_id_to_tag(usize::MAX), Tag::Outside);
     }
@@ -547,10 +556,10 @@ mod tests {
 
     #[test]
     fn merge_drops_special_tokens() {
-        // [CLS] Alice [SEP] → only "Alice" survives as word 0.
+        // [CLS] Alice [SEP] → only "Alice" survives as word 0. B-PER = id 3.
         let toks = vec![
             raw(0, 0.99, (0, 0), None),         // [CLS]
-            raw(1, 0.97, (0, 5), Some(0)),      // Alice (B-PER)
+            raw(3, 0.97, (0, 5), Some(0)),      // Alice (B-PER)
             raw(0, 0.99, (0, 0), None),         // [SEP]
         ];
         let merged = merge_subwords(&toks);
@@ -563,10 +572,11 @@ mod tests {
     fn merge_unions_subword_offsets_and_keeps_first_label() {
         // "Smithsonian" → subwords "Smith" (B-ORG) + "##son" (I-ORG) + "##ian"
         // (I-ORG), same word id. First label (B-ORG) wins; span = union.
+        // B-ORG = id 5, I-ORG = id 6 (see CONLL_LABELS).
         let toks = vec![
-            raw(3, 0.90, (0, 5), Some(0)),   // "Smith"   B-ORG
-            raw(4, 0.80, (5, 8), Some(0)),   // "##son"   I-ORG
-            raw(4, 0.75, (8, 11), Some(0)),  // "##ian"   I-ORG
+            raw(5, 0.90, (0, 5), Some(0)),   // "Smith"   B-ORG
+            raw(6, 0.80, (5, 8), Some(0)),   // "##son"   I-ORG
+            raw(6, 0.75, (8, 11), Some(0)),  // "##ian"   I-ORG
         ];
         let merged = merge_subwords(&toks);
         assert_eq!(merged.len(), 1, "one word");
@@ -599,14 +609,15 @@ mod tests {
     #[test]
     fn merge_then_aggregate_end_to_end_pure() {
         // Full pure-Rust path: raw subwords -> merged words -> findings,
-        // exercised without any model. "##" continuation tokens share a word.
+        // exercised without any model. Label ids match CONLL_LABELS:
+        // 0=O, 3=B-PER, 5=B-ORG.
         let text = "Mary acme";
         let m = text.find("Mary").unwrap() as u32;
         let a = text.find("acme").unwrap() as u32;
         let raws = vec![
             raw(0, 0.99, (0, 0), None),          // [CLS]
-            raw(1, 0.96, (m, m + 4), Some(0)),   // Mary B-PER
-            raw(3, 0.91, (a, a + 4), Some(1)),   // acme B-ORG
+            raw(3, 0.96, (m, m + 4), Some(0)),   // Mary B-PER
+            raw(5, 0.91, (a, a + 4), Some(1)),   // acme B-ORG
             raw(0, 0.99, (0, 0), None),          // [SEP]
         ];
         let merged = merge_subwords(&raws);

@@ -32,12 +32,31 @@ license key; free-tier (absent / wrong prefix) is refused with `unentitled`.
 ```bash
 cd nerd
 cargo build                       # scaffold (no model) — fails closed: "unavailable"
-cargo build --features model      # real ONNX inference (once wired + libonnxruntime present)
+cargo build --features model      # real ONNX inference (needs libonnxruntime at runtime)
+
+# Fetch the bundled model (one-time; pinned + SHA256-verified; no Python):
+./scripts/fetch-model.sh          # → models/model_quantized.onnx + models/tokenizer.json
+
 BITVANES_NERD_SOCKET=/tmp/bitvanes-nerd.sock ./target/debug/bitvanes-nerd
 ```
 
 The socket path defaults to `$XDG_RUNTIME_DIR/bitvanes-nerd.sock`
 (or `/tmp/bitvanes-nerd.sock`), overridable via `BITVANES_NERD_SOCKET`.
+
+## Runtime dependencies (only with `--features model`)
+
+All local, all pinned, no Python anywhere in the repo or at runtime:
+
+- **The model + tokenizer** — fetched by `scripts/fetch-model.sh` (pure shell +
+  curl + sha256) from `Xenova/bert-base-NER` at a pinned commit, SHA256-verified
+  against `models/MANIFEST.toml`. Loaded by nerd from `models/` (or
+  `$BITVANES_NER_MODEL` / `$BITVANES_NER_TOKENIZER`). Ship them in the release
+  tarball next to the binary.
+- **`libonnxruntime`** — the ONNX Runtime C engine; loaded dynamically via
+  `$ORT_DYLIB_PATH`. Absent ⇒ fail-closed `unavailable` (same pattern as
+  `libpdfium`). Ship it in the release tarball.
+
+Nothing else. No network calls at runtime, no Python on the host, no telemetry.
 
 ## Status
 
@@ -62,8 +81,6 @@ would have scrubbed. **Fail-closed by construction.**
 
 ## Runtime dependencies
 
-- `libonnxruntime` on the host when built with `--features model` (runtime,
-  not build-time — mirrors `libpdfium`). Bundled into the release tarball.
-- The model artifact (Int8 ONNX + tokenizer.json) — to be bundled; a Python
-  export script (`scripts/export_ner_model.py`) produces it from the HuggingFace
-  source. Until then the `model` feature errors at first inference.
+See "Runtime dependencies" under Build & run above — model fetched via
+`scripts/fetch-model.sh`, `libonnxruntime` via `ORT_DYLIB_PATH`. Both ship in
+the release tarball; nothing is fetched or run from the network at runtime.
