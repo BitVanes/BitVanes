@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Checkout from './Checkout';
 import DownloadButtons from './DownloadButtons';
+import LiveDemo from './LiveDemo';
 
 const REPO = 'https://github.com/BitVanes/BitVanes';
 const RELEASES = 'https://github.com/BitVanes/BitVanes/releases';
@@ -15,6 +16,7 @@ export default function Landing({ onOpenDashboard }: { onOpenDashboard: () => vo
     <div className="landing">
       <Nav onOpenDashboard={onOpenDashboard} />
       <Hero />
+      <LiveDemo />
       <Problems />
       <DemoStrip />
       <HowItWorks />

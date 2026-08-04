@@ -169,3 +169,69 @@ struct SimpleFinding {
     confidence: f32,
     anchors_hit: Vec<String>,
 }
+
+/// Quick-scrub: paste text + a list of rule slugs → get back the redacted text
+/// + a list of findings. No parsing, no chunking, no Arrow. This is the
+/// lightweight entry point the landing-page demo calls.
+///
+/// # Parameters
+///
+/// - `text` — raw UTF-8 text to scrub.
+/// - `rules_js` — a JS array of rule slugs (`"email"`, `"ssn"`, etc.).
+///
+/// # Returns
+///
+/// A JS object `{ redacted: string, findings: [{entity, offset_start, offset_end, confidence}] }`.
+#[wasm_bindgen]
+pub fn quick_scrub(text: &str, rules_js: JsValue) -> Result<JsValue, JsValue> {
+    let rules: Vec<String> = serde_wasm_bindgen::from_value(rules_js)
+        .map_err(|e| JsValue::from_str(&format!("rules parse failed: {e}")))?;
+
+    // Build a ScrubProfile from the requested rule slugs.
+    use bitvanes_core::schema::BuiltInPattern;
+    let mut patterns = Vec::new();
+    for slug in &rules {
+        let parsed = serde_json::from_str::<BuiltInPattern>(&format!("\"{}\"", slug.trim()));
+        if let Ok(p) = parsed {
+            patterns.push(p);
+        }
+    }
+    let profile = bitvanes_core::schema::ScrubProfile {
+        patterns,
+        ..Default::default()
+    };
+
+    let scrubber = bitvanes_core::pii::Scrubber::from_profile(&profile)
+        .map_err(|e| JsValue::from_str(&format!("scrubber build failed: {e}")))?;
+
+    let (redacted, _map, findings) = scrubber.scrub(text);
+
+    let result = QuickScrubResult {
+        redacted,
+        findings: findings
+            .iter()
+            .map(|f| QuickFinding {
+                entity: f.entity.clone(),
+                offset_start: f.offset_start,
+                offset_end: f.offset_end,
+                confidence: f.confidence,
+            })
+            .collect(),
+    };
+
+    Ok(serde_wasm_bindgen::to_value(&result)?)
+}
+
+#[derive(serde::Serialize)]
+struct QuickScrubResult {
+    redacted: String,
+    findings: Vec<QuickFinding>,
+}
+
+#[derive(serde::Serialize)]
+struct QuickFinding {
+    entity: String,
+    offset_start: u32,
+    offset_end: u32,
+    confidence: f32,
+}

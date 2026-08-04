@@ -158,6 +158,61 @@ a:hover { color: var(--accent-hover); }
 .hero-ctas { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; justify-content: center; }
 .hero-foot { margin-top: 18px; font-size: 13px; color: var(--text-dim); }
 
+/* ── Live demo (wasm) ───────────────────── */
+
+.live-demo {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 60px 32px 40px;
+}
+.live-demo h2 { font-size: clamp(26px, 3.5vw, 34px); margin-bottom: 10px; }
+.live-demo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 24px;
+}
+@media (max-width: 768px) { .live-demo-grid { grid-template-columns: 1fr; } }
+.live-demo-pane {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+}
+.live-demo-pane.purified { border-color: rgba(34, 197, 94, 0.35); }
+.live-demo-pane h4 {
+  font-size: 12px; color: var(--text-dim); margin-bottom: 12px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  display: flex; align-items: center; gap: 10px;
+}
+.live-demo-pane textarea {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text); font-family: var(--mono);
+  font-size: 13px; padding: 12px; resize: vertical; line-height: 1.5;
+}
+.live-demo-pane textarea:focus { outline: none; border-color: var(--accent); }
+.demo-loading, .demo-error { text-align: center; color: var(--text-muted); padding: 40px; }
+.demo-samples { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.demo-sample-btn {
+  padding: 7px 14px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-card); color: var(--text-muted);
+  font-family: var(--sans); transition: all 0.15s;
+}
+.demo-sample-btn:hover { border-color: var(--accent); color: var(--accent); }
+.demo-clear { color: var(--text-dim); }
+.demo-count {
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px;
+}
+.demo-typing { color: var(--text-dim); font-size: 11px; font-weight: 400; }
+.demo-findings { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.demo-tag {
+  font-family: var(--mono); font-size: 11px; color: var(--accent);
+  background: var(--accent-dim); padding: 3px 8px; border-radius: 4px;
+}
+.demo-note { text-align: center; font-size: 12px; color: var(--text-dim); margin-top: 16px; }
+
 /* ── Download buttons ───────────────────── */
 
 .dl-buttons { display: flex; flex-direction: column; align-items: center; gap: 14px; margin: 28px 0 0; }
