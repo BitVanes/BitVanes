@@ -8,12 +8,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
  * visitor pastes their own text and watches PII get redacted live.
  */
 
-let wasmReady: Promise<any> | null = null;
+let wasmMod: any = null;
 async function loadWasm() {
-  if (!wasmReady) {
-    wasmReady = import('../wasm/bitvanes_wasm.js').then((mod) => mod.default());
+  if (!wasmMod) {
+    const mod = await import('../wasm/bitvanes_wasm.js');
+    await mod.default(); // load + init the wasm binary
+    wasmMod = mod; // the named exports (quick_scrub, etc.) live on the module
   }
-  return wasmReady;
+  return wasmMod;
 }
 
 const SAMPLES = [
