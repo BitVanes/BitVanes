@@ -132,7 +132,8 @@ pub(crate) struct RawToken {
 /// argmaxes logits against this; a future model swap must update this (or
 /// load `id2label` from config dynamically).
 pub(crate) const CONLL_LABELS: [&str; 9] = [
-    "O", "B-MISC", "I-MISC", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC",
+    "O", "B-MISC", "I-MISC", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC",
+    "I-LOC",
 ];
 
 /// Map a model label id to a [`Tag`] via [`CONLL_LABELS`]. Out-of-range ids
@@ -163,7 +164,12 @@ pub(crate) fn merge_subwords(tokens: &[RawToken]) -> Vec<TokenPred> {
             // Special token — flush any open word (words don't span special
             // tokens) and skip.
             if let Some((_, tag, conf, start, end)) = cur_word.take() {
-                out.push(TokenPred { tag, start, end, confidence: conf });
+                out.push(TokenPred {
+                    tag,
+                    start,
+                    end,
+                    confidence: conf,
+                });
             }
             continue;
         };
@@ -185,7 +191,12 @@ pub(crate) fn merge_subwords(tokens: &[RawToken]) -> Vec<TokenPred> {
             _ => {
                 // New word: flush previous, open a new one with this subword.
                 if let Some((_, tag, conf, start, end)) = cur_word.take() {
-                    out.push(TokenPred { tag, start, end, confidence: conf });
+                    out.push(TokenPred {
+                        tag,
+                        start,
+                        end,
+                        confidence: conf,
+                    });
                 }
                 cur_word = Some((
                     word_id,
@@ -198,7 +209,12 @@ pub(crate) fn merge_subwords(tokens: &[RawToken]) -> Vec<TokenPred> {
         }
     }
     if let Some((_, tag, conf, start, end)) = cur_word {
-        out.push(TokenPred { tag, start, end, confidence: conf });
+        out.push(TokenPred {
+            tag,
+            start,
+            end,
+            confidence: conf,
+        });
     }
     out
 }
@@ -271,7 +287,11 @@ impl OpenSpan {
 ///
 /// Findings are returned in left-to-right order with non-overlapping,
 /// monotonically increasing byte ranges — guaranteed by the BIO scheme.
-pub(crate) fn aggregate(text: &str, tokens: &[TokenPred], min_confidence: f32) -> Vec<NerFinding> {
+pub(crate) fn aggregate(
+    text: &str,
+    tokens: &[TokenPred],
+    min_confidence: f32,
+) -> Vec<NerFinding> {
     let mut out = Vec::new();
     let mut open: Option<OpenSpan> = None;
 
@@ -541,11 +561,20 @@ mod tests {
         assert_eq!(label_id_to_tag(6), Tag::Inside(Entity::Org));
         assert_eq!(label_id_to_tag(7), Tag::Begin(Entity::Loc));
         assert_eq!(label_id_to_tag(8), Tag::Inside(Entity::Loc));
-        assert_eq!(label_id_to_tag(99), Tag::Outside, "out-of-range is fail-safe");
+        assert_eq!(
+            label_id_to_tag(99),
+            Tag::Outside,
+            "out-of-range is fail-safe"
+        );
         assert_eq!(label_id_to_tag(usize::MAX), Tag::Outside);
     }
 
-    fn raw(label_id: usize, conf: f32, off: (u32, u32), word: Option<u32>) -> RawToken {
+    fn raw(
+        label_id: usize,
+        conf: f32,
+        off: (u32, u32),
+        word: Option<u32>,
+    ) -> RawToken {
         RawToken {
             label_id,
             confidence: conf,
@@ -558,9 +587,9 @@ mod tests {
     fn merge_drops_special_tokens() {
         // [CLS] Alice [SEP] → only "Alice" survives as word 0. B-PER = id 3.
         let toks = vec![
-            raw(0, 0.99, (0, 0), None),         // [CLS]
-            raw(3, 0.97, (0, 5), Some(0)),      // Alice (B-PER)
-            raw(0, 0.99, (0, 0), None),         // [SEP]
+            raw(0, 0.99, (0, 0), None),    // [CLS]
+            raw(3, 0.97, (0, 5), Some(0)), // Alice (B-PER)
+            raw(0, 0.99, (0, 0), None),    // [SEP]
         ];
         let merged = merge_subwords(&toks);
         assert_eq!(merged.len(), 1);
@@ -574,23 +603,34 @@ mod tests {
         // (I-ORG), same word id. First label (B-ORG) wins; span = union.
         // B-ORG = id 5, I-ORG = id 6 (see CONLL_LABELS).
         let toks = vec![
-            raw(5, 0.90, (0, 5), Some(0)),   // "Smith"   B-ORG
-            raw(6, 0.80, (5, 8), Some(0)),   // "##son"   I-ORG
-            raw(6, 0.75, (8, 11), Some(0)),  // "##ian"   I-ORG
+            raw(5, 0.90, (0, 5), Some(0)),  // "Smith"   B-ORG
+            raw(6, 0.80, (5, 8), Some(0)),  // "##son"   I-ORG
+            raw(6, 0.75, (8, 11), Some(0)), // "##ian"   I-ORG
         ];
         let merged = merge_subwords(&toks);
         assert_eq!(merged.len(), 1, "one word");
-        assert_eq!(merged[0].tag, Tag::Begin(Entity::Org), "first-subword label");
-        assert_eq!((merged[0].start, merged[0].end), (0, 11), "union of offsets");
-        assert!((merged[0].confidence - 0.90).abs() < 1e-6, "first confidence");
+        assert_eq!(
+            merged[0].tag,
+            Tag::Begin(Entity::Org),
+            "first-subword label"
+        );
+        assert_eq!(
+            (merged[0].start, merged[0].end),
+            (0, 11),
+            "union of offsets"
+        );
+        assert!(
+            (merged[0].confidence - 0.90).abs() < 1e-6,
+            "first confidence"
+        );
     }
 
     #[test]
     fn merge_splits_adjacent_words() {
         // "Alice Bob" → two words; each gets its own TokenPred.
         let toks = vec![
-            raw(1, 0.95, (0, 5), Some(0)),  // Alice
-            raw(1, 0.93, (6, 9), Some(1)),  // Bob
+            raw(1, 0.95, (0, 5), Some(0)), // Alice
+            raw(1, 0.93, (6, 9), Some(1)), // Bob
         ];
         let merged = merge_subwords(&toks);
         assert_eq!(merged.len(), 2);
@@ -615,10 +655,10 @@ mod tests {
         let m = text.find("Mary").unwrap() as u32;
         let a = text.find("acme").unwrap() as u32;
         let raws = vec![
-            raw(0, 0.99, (0, 0), None),          // [CLS]
-            raw(3, 0.96, (m, m + 4), Some(0)),   // Mary B-PER
-            raw(5, 0.91, (a, a + 4), Some(1)),   // acme B-ORG
-            raw(0, 0.99, (0, 0), None),          // [SEP]
+            raw(0, 0.99, (0, 0), None),        // [CLS]
+            raw(3, 0.96, (m, m + 4), Some(0)), // Mary B-PER
+            raw(5, 0.91, (a, a + 4), Some(1)), // acme B-ORG
+            raw(0, 0.99, (0, 0), None),        // [SEP]
         ];
         let merged = merge_subwords(&raws);
         let findings = aggregate(text, &merged, 0.50);

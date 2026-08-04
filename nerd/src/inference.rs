@@ -33,8 +33,8 @@ use std::sync::{Mutex, OnceLock};
 
 use ort::value::TensorRef;
 
-use crate::ner::{aggregate, merge_subwords, RawToken, CONLL_LABELS};
 use crate::NerFinding;
+use crate::ner::{CONLL_LABELS, RawToken, aggregate, merge_subwords};
 
 /// Confidence floor for emitted findings. BERT-NER softmax is overconfident;
 /// this trims the long tail of low-recall guesses.
@@ -82,14 +82,14 @@ fn load() -> Option<LoadedModel> {
 
     // ort init (load-dynamic reads ORT_DYLIB_PATH). `commit()` returns bool;
     // a false usually means libonnxruntime is not on the host.
-    if !ort::init()
-        .with_name("bitvanes-nerd")
-        .commit()
-    {
+    if !ort::init().with_name("bitvanes-nerd").commit() {
         return None;
     }
 
-    let session = ort::session::Session::builder().ok()?.commit_from_file(&model_path).ok()?;
+    let session = ort::session::Session::builder()
+        .ok()?
+        .commit_from_file(&model_path)
+        .ok()?;
     let tokenizer = tokenizers::Tokenizer::from_file(&tok_path).ok()?;
     Some(LoadedModel {
         session: Mutex::new(session),
@@ -132,11 +132,16 @@ pub fn run(text: &str) -> Result<Vec<NerFinding>, (&'static str, String)> {
     }
 
     // 2. Build [1, seq] i64 input tensors (BERT expects int64).
-    let ids_arr = ndarray::Array2::from_shape_vec((1, seq), ids.iter().map(|&v| v as i64).collect())
-        .map_err(|e| ("internal", format!("shape ids: {e}")))?;
-    let attn_arr =
-        ndarray::Array2::from_shape_vec((1, seq), attn.iter().map(|&v| v as i64).collect())
-            .map_err(|e| ("internal", format!("shape attn: {e}")))?;
+    let ids_arr = ndarray::Array2::from_shape_vec(
+        (1, seq),
+        ids.iter().map(|&v| v as i64).collect(),
+    )
+    .map_err(|e| ("internal", format!("shape ids: {e}")))?;
+    let attn_arr = ndarray::Array2::from_shape_vec(
+        (1, seq),
+        attn.iter().map(|&v| v as i64).collect(),
+    )
+    .map_err(|e| ("internal", format!("shape attn: {e}")))?;
     let tt_arr = ndarray::Array2::<i64>::zeros((1, seq));
 
     // 3. Run the model. Input names follow the standard BERT export.
@@ -205,7 +210,9 @@ fn softmax_argmax(logits: impl IntoIterator<Item = f32>) -> (usize, f32) {
     let (best_id, &best_logit) = ls
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|(_, a), (_, b)| {
+            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+        })
         .expect("non-empty");
     let conf = if denom > 0.0 {
         (best_logit - max).exp() / denom
@@ -222,7 +229,8 @@ mod tests {
     #[test]
     fn softmax_argmax_picks_the_max_with_probability() {
         // logits where index 3 dominates → high confidence on id 3.
-        let (id, conf) = softmax_argmax([1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
+        let (id, conf) =
+            softmax_argmax([1.0, 1.0, 1.0, 8.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
         assert_eq!(id, 3);
         assert!(conf > 0.99, "dominant logit should be ~certain: {conf}");
     }
@@ -255,7 +263,9 @@ mod tests {
             std::env::var("BITVANES_NER_MODEL"),
             std::env::var("BITVANES_NER_TOKENIZER"),
         ) else {
-            eprintln!("skipped: BITVANES_NER_MODEL / BITVANES_NER_TOKENIZER not set");
+            eprintln!(
+                "skipped: BITVANES_NER_MODEL / BITVANES_NER_TOKENIZER not set"
+            );
             return;
         };
         if !std::path::Path::new(&model_path).exists() {
@@ -264,12 +274,14 @@ mod tests {
         }
 
         let text = "Please reach Alice Smith about the contract.";
-        let findings = run(text).unwrap_or_else(|e| panic!("inference failed: {e:?}"));
+        let findings =
+            run(text).unwrap_or_else(|e| panic!("inference failed: {e:?}"));
         eprintln!("findings: {findings:?}");
-        let has_person = findings
-            .iter()
-            .any(|f| f.entity == "person_name");
-        assert!(has_person, "expected a person_name finding; got {findings:?}");
+        let has_person = findings.iter().any(|f| f.entity == "person_name");
+        assert!(
+            has_person,
+            "expected a person_name finding; got {findings:?}"
+        );
 
         // The person finding's byte span must point at "Alice" (or cover it)
         // in the original text — the offset invariant, verified for real.
