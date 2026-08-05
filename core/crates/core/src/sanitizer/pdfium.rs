@@ -181,15 +181,10 @@ pub fn redact_pdf(
     scrubber: &Scrubber,
     mode: PdfRedactMode,
 ) -> Result<(Vec<u8>, PdfSanitizeResult)> {
-    // Bind to a runtime Pdfium library. Fail-closed if none is available.
-    let bindings = Pdfium::bind_to_system_library()
-        .map_err(|e| BitVanesError::FeatureNotEnabled(
-            format!(
-                "pdfium runtime library not available ({e}); install libpdfium or fall back to --pdf-mode text-only"
-            )
-            .into(),
-        ))?;
-    let pdfium = Pdfium::new(bindings);
+    // Bind to a runtime Pdfium library via the auto-discovery in
+    // [`pdfium_available`] (bundled sibling first, then system). Fail-closed
+    // if none can be located.
+    let pdfium = get_pdfium()?;
 
     let document = pdfium
         .load_pdf_from_byte_slice(bytes, None)
@@ -207,7 +202,11 @@ pub fn redact_pdf(
         // Build the page text from pdfium chars and record each char's bounding
         // rect, so PII byte offsets (from the scrubber) map exactly to glyphs.
         let (page_text, char_rects) = collect_text_and_rects(&page)?;
-        let (_redacted, _map, findings) = scrubber.scrub(&page_text);
+        // `scrub_with_detectors` runs the Tier-2 NER sidecar too (fail-closed:
+        // a configured sidecar that is unreachable fails the whole redaction
+        // rather than emitting a PDF with un-redacted names). With no detector
+        // attached it is identical to Tier-1 `scrub`.
+        let (_redacted, _map, findings) = scrubber.scrub_with_detectors(&page_text)?;
         total_matches += findings.len();
 
         if findings.is_empty() {

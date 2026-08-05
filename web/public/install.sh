@@ -20,6 +20,7 @@ OS=$(uname -s)
 ARCH=$(uname -m)
 case "$OS/$ARCH" in
   Linux/x86_64|Linux/amd64)            ASSET="bitvanes-x86_64-linux.tar.gz" ;;
+  Linux/aarch64|Linux/arm64)           ASSET="bitvanes-aarch64-linux.tar.gz" ;;
   Darwin/arm64)                        ASSET="bitvanes-aarch64-macos.tar.gz" ;;
   Darwin/x86_64)                       ASSET="bitvanes-x86_64-macos.tar.gz" ;;
   *) err "unsupported OS/arch: $OS/$ARCH (see bitvanes.com for manual download)" ;;

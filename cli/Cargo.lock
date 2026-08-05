@@ -447,7 +447,7 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "bitvanes-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "axum",
  "base64",
@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "bitvanes-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "arrow",
  "blake3",

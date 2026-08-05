@@ -66,9 +66,13 @@ fn tokenizer_path() -> Option<PathBuf> {
 }
 
 /// Default artifact location: `models/<name>` next to the running binary.
+/// Default artifact location: `models/<name>` next to the binary, or one dir
+/// up (the Homebrew `bin/`+`models/` install layout).
 fn default_artifact(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    Some(exe.parent()?.join("models").join(name))
+    let exe_dir = exe.parent()?;
+    Some(exe_dir.join("models").join(name))
+        .or_else(|| Some(exe_dir.parent()?.join("models").join(name)))
 }
 
 /// Load (once) and cache the model + tokenizer. Returns `Ok(Some(_))` on

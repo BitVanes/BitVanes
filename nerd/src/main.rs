@@ -191,6 +191,10 @@ fn write_outcome(stream: &mut UnixStream, outcome: &DetectOutcome) -> std::io::R
 // ---------------------------------------------------------------------------
 
 fn main() -> std::io::Result<()> {
+    // Handle --help / -h / --version / -V before doing anything else (so the
+    // user gets instant usage without waiting for libonnxruntime/model load).
+    handle_cli_args();
+
     // Auto-discover a bundled `libonnxruntime` (sibling `lib/` dir) so a
     // tarball/installer "just works" with no ORT_DYLIB_PATH setup. ort reads
     // this env at `init()`; set it before the model loads. Safe at startup —
@@ -248,6 +252,56 @@ const fn ort_filename() -> &'static str {
     } else {
         "libonnxruntime.so"
     }
+}
+
+/// Prints usage / version and exits when the user passes `--help`/`-h`/
+/// `--version`/`-V`. No clap dependency — nerd's surface is tiny (it is a
+/// service configured by env vars, not flags), so a manual parse is clearer.
+fn handle_cli_args() {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                println!(
+                    "bitvanes-nerd {version} — Tier-2 NER sidecar for BitVanes\n\
+                     \n\
+                     Runs the local Int8 BERT-NER model and serves named-entity\n\
+                     detection (names, organizations, locations) to the BitVanes\n\
+                     engine over a Unix-domain socket. The engine stays ML-free;\n\
+                     the model + ONNX Runtime live here.\n\
+                     \n\
+                     The engine (bitvanes daemon/scrub) auto-attaches this sidecar\n\
+                     when (a) the entitlement is paid and (b) this socket exists.\n\
+                     Just run it alongside `bitvanes daemon` — no shared config.\n\
+                     \n\
+                     Configuration (env vars, all optional):\n\
+                     \x20 BITVANES_NERD_SOCKET      socket path (default:\n\
+                     \x20                           $XDG_RUNTIME_DIR/bitvanes-nerd.sock,\n\
+                     \x20                           or /tmp/bitvanes-nerd.sock)\n\
+                     \x20 BITVANES_NER_MODEL        path to the ONNX model\n\
+                     \x20                           (default: <exe>/models/model_quantized.onnx)\n\
+                     \x20 BITVANES_NER_TOKENIZER    path to tokenizer.json\n\
+                     \x20 ORT_DYLIB_PATH            path to libonnxruntime\n\
+                     \x20                           (auto: <exe>/lib/libonnxruntime.*)\n\
+                     \n\
+                     Build with `--features model` to enable real inference;\n\
+                     otherwise the service fails closed (`unavailable`).\n\
+                     \n\
+                     Options:\n\
+                     \x20 -h, --help        show this help\n\
+                     \x20 -V, --version     show the version",
+                    version = env!("CARGO_PKG_VERSION")
+                );
+                std::process::exit(0);
+            }
+            "-V" | "--version" => {
+                println!("bitvanes-nerd {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            _ => { /* ignore unknown args — nerd is service-style, not flag-driven */ }
+        }
+    }
+    let _ = args;
 }
 
 /// If `ORT_DYLIB_PATH` is unset, point it at a bundled `libonnxruntime` next
