@@ -1,0 +1,33 @@
+# Node
+node_modules/
+dist/
+out/
+*.tsbuildinfo
+
+# Packaging
+*.vsix
+
+# Webview / website build output
+website/docs/.vitepress/cache/
+website/docs/.vitepress/dist/
+
+# Environment / secrets
+.env
+.env.*
+*.local
+
+# Editor / IDE
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+coverage/

@@ -1,0 +1,287 @@
+{
+  "name": "bitvanes",
+  "displayName": "BitVanes",
+  "description": "Interactive AST & data-flow walkthroughs for diffs and code paths — AI-guided, in-editor.",
+  "version": "0.1.0",
+  "publisher": "bitvanes",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "icon": "resources/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BitVanes/BitVanes.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BitVanes/BitVanes/issues"
+  },
+  "homepage": "https://bitvanes.github.io/BitVanes/",
+  "engines": {
+    "vscode": "^1.95.0",
+    "node": ">=20.0.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "categories": [
+    "Programming Languages",
+    "Machine Learning",
+    "Chat",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "diff",
+    "code review",
+    "ast",
+    "data flow",
+    "walkthrough",
+    "copilot",
+    "solidity",
+    "rust",
+    "go",
+    "python"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "bitvanes.walkthroughDiff",
+        "title": "Walkthrough Working Tree Changes",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.walkthroughStagedDiff",
+        "title": "Walkthrough Staged Changes",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.walkthroughSelection",
+        "title": "Walkthrough Code Path at Cursor",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.nextStep",
+        "title": "Next Step",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.prevStep",
+        "title": "Previous Step",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.jumpToStep",
+        "title": "Jump to Step",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.explainStep",
+        "title": "Browse Steps & Explanations",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.toggleAutoplay",
+        "title": "Toggle Autoplay",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.exitWalkthrough",
+        "title": "Exit Walkthrough",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.setApiKey",
+        "title": "Set API Key for External LLM Provider",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.clearApiKey",
+        "title": "Delete Stored API Key",
+        "category": "BitVanes"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "bitvanes",
+          "title": "BitVanes",
+          "icon": "resources/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "bitvanes": [
+        {
+          "id": "bitvanes.stepsView",
+          "name": "Walkthrough"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "bitvanes.stepsView",
+        "contents": "No walkthrough running.\n[Walkthrough Working Tree Changes](command:bitvanes.walkthroughDiff)\n[Walkthrough Code Path at Cursor](command:bitvanes.walkthroughSelection)\nTo review staged changes, open the Source Control view and use the BitVanes actions."
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "bitvanes.walkthroughDiff",
+          "when": "scmProvider == git",
+          "group": "bitvanes"
+        },
+        {
+          "command": "bitvanes.walkthroughStagedDiff",
+          "when": "scmProvider == git",
+          "group": "bitvanes"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "bitvanes.walkthroughSelection",
+          "group": "bitvanes"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "bitvanes.walkthroughSelection",
+          "when": "view == bitvanes.stepsView && !bitvanes.active",
+          "group": "navigation"
+        },
+        {
+          "command": "bitvanes.toggleAutoplay",
+          "when": "view == bitvanes.stepsView && bitvanes.active",
+          "group": "navigation"
+        },
+        {
+          "command": "bitvanes.exitWalkthrough",
+          "when": "view == bitvanes.stepsView && bitvanes.active",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "key": "]",
+        "command": "bitvanes.nextStep",
+        "when": "bitvanes.active"
+      },
+      {
+        "key": "[",
+        "command": "bitvanes.prevStep",
+        "when": "bitvanes.active"
+      },
+      {
+        "key": "escape",
+        "command": "bitvanes.exitWalkthrough",
+        "when": "bitvanes.active && editorTextFocus && !findWidgetVisible && !suggestWidgetVisible"
+      }
+    ],
+    "configuration": {
+      "title": "BitVanes",
+      "properties": {
+        "bitvanes.llm.provider": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "vscode-lm",
+            "openai-compatible"
+          ],
+          "enumDescriptions": [
+            "Use VS Code Language Model (Copilot) when available, then fall back to the OpenAI-compatible endpoint",
+            "Only use the built-in VS Code Language Model API (GitHub Copilot)",
+            "Only use the OpenAI-compatible endpoint (Ollama / vLLM / LM Studio / OpenAI / Anthropic / OpenRouter)"
+          ],
+          "default": "auto",
+          "description": "Which language model backend to use for generating walkthroughs."
+        },
+        "bitvanes.llm.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434/v1",
+          "markdownDescription": "OpenAI-compatible base URL. Examples: Ollama `http://localhost:11434/v1`, LM Studio `http://localhost:1234/v1`, vLLM `http://localhost:8000/v1`, OpenAI `https://api.openai.com/v1`, Anthropic `https://api.anthropic.com/v1`, OpenRouter `https://openrouter.ai/api/v1`."
+        },
+        "bitvanes.llm.modelId": {
+          "type": "string",
+          "default": "",
+          "description": "Model ID for the OpenAI-compatible endpoint (e.g. `llama3.1`, `qwen2.5-coder:14b`, `gpt-4o`, `claude-sonnet-4-20250514`). Ignored for the VS Code Language Model provider."
+        },
+        "bitvanes.llm.temperature": {
+          "type": "number",
+          "default": 0.2,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Sampling temperature for walkthrough generation. Low values keep output deterministic and schema-accurate."
+        },
+        "bitvanes.llm.maxTokens": {
+          "type": "number",
+          "default": 4096,
+          "minimum": 256,
+          "maximum": 32768,
+          "description": "Maximum tokens to request from the model."
+        },
+        "bitvanes.llm.maxSteps": {
+          "type": "number",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum number of steps in a generated walkthrough."
+        },
+        "bitvanes.llm.contextLines": {
+          "type": "number",
+          "default": 6,
+          "minimum": 0,
+          "maximum": 60,
+          "description": "Lines of context included above and below each diff hunk when building the model prompt."
+        },
+        "bitvanes.autoplay.intervalMs": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Delay between steps during autoplay."
+        },
+        "bitvanes.editor.spotlightColor": {
+          "type": "string",
+          "default": "#f59e0b",
+          "description": "Spotlight border color for the active token (hex).",
+          "examples": [
+            "#f59e0b",
+            "#38bdf8"
+          ]
+        },
+        "bitvanes.editor.dimOpacity": {
+          "type": "number",
+          "default": 0.3,
+          "minimum": 0.05,
+          "maximum": 1,
+          "description": "Opacity applied to code outside the active step's scope."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "dev": "node esbuild.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test scripts",
+    "test": "vitest run",
+    "fetch-grammars": "node scripts/fetch-grammars.mjs",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.25.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.20.0",
+    "tree-sitter-wasms": "^0.1.12",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.24.0",
+    "vitest": "^5.0.1"
+  }
+}
