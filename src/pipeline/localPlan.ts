@@ -48,6 +48,10 @@ export async function buildLocalPlan(
     throw new Error('Instant mode found no analyzable statements in the changed lines — try the AI walkthrough instead.');
   }
 
+  steps.forEach((s, i) => {
+    s.stepIndex = i;
+  });
+
   return {
     summary: `Instant walkthrough — ${files.length} changed file${files.length === 1 ? '' : 's'} (local AST analysis, no model)`,
     entryPoint: steps[0]!.filePath,
@@ -86,12 +90,13 @@ function stepFor(
       base.explanation = `Local analysis: call to \`${compact(node.text)}\`${where} — control or data flows out through this invocation.`;
       break;
     case 'security':
+    case 'control':
       base.explanation = `Local analysis: validation/invariant statement${where} — execution only proceeds past this line if the check holds.`;
       break;
     default:
       base.explanation = `Local analysis: statement${where} touched by this change.`;
   }
-  if (node.category === 'security' && VALIDATE_HINT_RE.test(node.text)) {
+  if ((node.category === 'security' || node.category === 'control') && VALIDATE_HINT_RE.test(node.text)) {
     base.securityNote = 'Invariant check in the changed lines — instant mode flags the site; use the AI walkthrough for semantic analysis.';
   }
   return base;
@@ -104,7 +109,7 @@ function variableFor(node: SyntaxNode): VariableMutation | undefined {
   if (node.category === 'declaration') action = 'init';
   else if (node.category === 'assignment') action = 'mutate';
   else if (node.category === 'call') action = 'pass';
-  else if (node.category === 'security') action = 'validate';
+  else if (node.category === 'security' || node.category === 'control') action = 'validate';
   else return undefined;
   return { name, action };
 }
@@ -133,6 +138,7 @@ function titleFor(node: SyntaxNode, variable: VariableMutation | undefined): str
     case 'call':
       return `Call ${name}`;
     case 'security':
+    case 'control':
       return `Validate ${name}`;
     default:
       return `Inspect ${name}`;

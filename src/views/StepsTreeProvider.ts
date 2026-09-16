@@ -32,6 +32,19 @@ export class StepsTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       return item;
     }
 
+    if (node.kind === 'note') {
+      const item = new vscode.TreeItem('Security note', vscode.TreeItemCollapsibleState.None);
+      item.iconPath = new vscode.ThemeIcon('shield', new vscode.ThemeColor('list.warningForeground'));
+      item.description = truncate(node.step.securityNote ?? '', 70);
+      const tip = new vscode.MarkdownString(undefined, true);
+      tip.supportThemeIcons = true;
+      tip.appendMarkdown(`$(alert) **Security:** ${mdEscape(node.step.securityNote ?? '')}`);
+      item.tooltip = tip;
+      item.command = { command: 'bitvanes.jumpToStep', title: 'Jump to step', arguments: [node.step.stepIndex] };
+      item.contextValue = 'bitvanesNote';
+      return item;
+    }
+
     const { step, index, current } = node;
     const item = new vscode.TreeItem(
       `${index + 1}. ${step.title}`,
@@ -55,21 +68,6 @@ export class StepsTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     item.tooltip = this.stepTooltip(step, index, current);
     item.contextValue = 'bitvanesStep';
     return item;
-
-  if (node.kind === 'note') {
-    const item = new vscode.TreeItem('Security note', vscode.TreeItemCollapsibleState.None);
-    item.iconPath = new vscode.ThemeIcon('shield', new vscode.ThemeColor('list.warningForeground'));
-    item.description = truncate(node.step.securityNote ?? '', 70);
-    const tip = new vscode.MarkdownString(undefined, true);
-    tip.supportThemeIcons = true;
-    tip.appendMarkdown(`$(alert) **Security:** ${mdEscape(node.step.securityNote ?? '')}`);
-    item.tooltip = tip;
-    item.command = { command: 'bitvanes.jumpToStep', title: 'Jump to step', arguments: [node.step.stepIndex] };
-    item.contextValue = 'bitvanesNote';
-    return item;
-  }
-
-  throw new Error('unreachable node kind');
   }
 
   getChildren(element?: TreeNode): TreeNode[] {
