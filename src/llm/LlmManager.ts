@@ -19,16 +19,8 @@ export interface LlmClient {
   complete(req: LlmCompleteRequest, token?: vscode.CancellationToken): Promise<string>;
 }
 
-interface VscodeLmModel {
-  readonly id: string;
-  readonly name: string;
-  readonly vendor: string;
-  readonly family: string;
-  sendRequest(
-    messages: vscode.LanguageModelChatMessage[],
-    options?: vscode.LanguageModelChatRequestOptions,
-    token?: vscode.CancellationToken,
-  ): vscode.LanguageModelChatResponse;
+interface VscodeLmApi {
+  selectChatModels(selector?: vscode.LanguageModelChatSelector): Thenable<vscode.LanguageModelChat[]>;
 }
 
 const MODEL_PREFERENCE = [
@@ -38,16 +30,15 @@ const MODEL_PREFERENCE = [
   /o[34]/i,
 ];
 
-function lmApi(): { selectChatModels(selector?: vscode.LanguageModelChatSelector): Thenable<VscodeLmModel[]> } | undefined {
-  const api = (vscode as unknown as { lm?: { selectChatModels(selector?: vscode.LanguageModelChatSelector): Thenable<VscodeLmModel[]> } }).lm;
-  return api;
+function lmApi(): VscodeLmApi | undefined {
+  return (vscode as unknown as { lm?: VscodeLmApi }).lm;
 }
 
 export class VscodeLmClient implements LlmClient {
   readonly id = 'vscode-lm';
   readonly label: string;
-  private model: VscodeLmModel | null = null;
-  private probe: Promise<VscodeLmModel | null> | null = null;
+  private model: vscode.LanguageModelChat | null = null;
+  private probe: Promise<vscode.LanguageModelChat | null> | null = null;
 
   constructor() {
     this.label = 'VS Code Copilot (Language Model API)';
@@ -57,7 +48,7 @@ export class VscodeLmClient implements LlmClient {
     return (await this.probeModel()) !== null;
   }
 
-  private probeModel(): Promise<VscodeLmModel | null> {
+  private probeModel(): Promise<vscode.LanguageModelChat | null> {
     if (!this.probe) {
       this.probe = (async () => {
         const lm = lmApi();
@@ -80,8 +71,11 @@ export class VscodeLmClient implements LlmClient {
   async complete(req: LlmCompleteRequest, token?: vscode.CancellationToken): Promise<string> {
     const model = await this.probeModel();
     if (!model) throw new Error('no VS Code language models available');
-    const messages = [vscode.LanguageModelChatMessage.Assistant(req.system), vscode.LanguageModelChatMessage.User(req.user)];
-    const response = model.sendRequest(messages, {}, token);
+    const messages = [
+      vscode.LanguageModelChatMessage.Assistant(req.system),
+      vscode.LanguageModelChatMessage.User(req.user),
+    ];
+    const response = await model.sendRequest(messages, {}, token);
     let out = '';
     for await (const chunk of response.text) {
       out += chunk;
