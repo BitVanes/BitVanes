@@ -2,7 +2,7 @@
   "name": "bitvanes",
   "displayName": "BitVanes",
   "description": "Guided, step-by-step tours through diffs, AI-generated changes, and unfamiliar code — right inside VS Code.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "bitvanes",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "resources/icon.png",

@@ -67,7 +67,11 @@ export class WalkthroughSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   reveal(): void {
-    this.view?.show(false);
+    if (this.view) {
+      this.view.show(false);
+    } else {
+      void vscode.commands.executeCommand(`${WalkthroughSidebarProvider.viewId}.focus`);
+    }
   }
 
   private sync(): void {
