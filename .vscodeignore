@@ -1,0 +1,12 @@
+.vscode/**
+.github/**
+src/**
+test/**
+scripts/**
+website/**
+esbuild.js
+tsconfig.json
+vitest.config.ts
+eslint.config.mjs
+node_modules/.cache/**
+!dist/**
