@@ -2,7 +2,7 @@
   "name": "bitvanes",
   "displayName": "BitVanes",
   "description": "Guided, step-by-step tours through diffs, AI-generated changes, and unfamiliar code — right inside VS Code.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "bitvanes",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "resources/icon.png",
@@ -121,17 +121,12 @@
     "views": {
       "bitvanes": [
         {
+          "type": "webview",
           "id": "bitvanes.stepsView",
           "name": "Walkthrough"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "bitvanes.stepsView",
-        "contents": "No walkthrough running.\n[Walkthrough Working Tree Changes](command:bitvanes.walkthroughDiff)\n[Instant Walkthrough — local, no AI](command:bitvanes.walkthroughInstant)\n[Walkthrough Code Path at Cursor](command:bitvanes.walkthroughSelection)"
-      }
-    ],
     "menus": {
       "scm/title": [
         {

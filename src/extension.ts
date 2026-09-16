@@ -9,8 +9,8 @@ import type { WalkthroughStyle } from './llm/prompts';
 import { PlanValidationError } from './types/protocol';
 import { buildDiffRequest, buildSelectionRequest, refinePlanRanges } from './pipeline/contextBuilder';
 import { buildLocalPlan } from './pipeline/localPlan';
-import { StepsTreeProvider } from './views/StepsTreeProvider';
 import { StatusBarController } from './views/StatusBarController';
+import { WalkthroughSidebarProvider } from './views/WalkthroughSidebarProvider';
 import { toDisplayPath } from './util/text';
 
 class UserError extends Error {}
@@ -27,12 +27,48 @@ export function activate(context: vscode.ExtensionContext): void {
   const llm = new LlmManager(context.secrets, context.globalState);
   director = new EditorDirector(GitProvider.workspaceRoot);
 
-  const tree = new StepsTreeProvider();
-  const treeView = vscode.window.createTreeView('bitvanes.stepsView', {
-    treeDataProvider: tree,
-    showCollapseAll: false,
-  });
   const statusbar = new StatusBarController();
+  const sidebar = new WalkthroughSidebarProvider(context.extensionUri, {
+    next: () => {
+      stopAutoplay();
+      director?.next();
+    },
+    prev: () => {
+      stopAutoplay();
+      director?.prev();
+    },
+    jump: (i) => {
+      stopAutoplay();
+      director?.jump(i);
+    },
+    toggleAutoplay: () => {
+      if (autoplayTimer) stopAutoplay();
+      else if (director?.state) startAutoplay();
+    },
+    exit: () => {
+      stopAutoplay();
+      director?.exit();
+    },
+    browse: () => {
+      void browseSteps();
+    },
+    start: (mode) => {
+      void runPipeline(mode);
+    },
+    setStyle: (s) => {
+      if (s !== 'expert' && s !== 'standard' && s !== 'learner') return;
+      void vscode.workspace
+        .getConfiguration('bitvanes.walkthrough')
+        .update('style', s, vscode.ConfigurationTarget.Global);
+      sidebar.setStyle(s);
+    },
+  });
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(WalkthroughSidebarProvider.viewId, sidebar, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+  sidebar.setStyle(normalizeStyle(vscode.workspace.getConfiguration('bitvanes.walkthrough').get<string>('style')));
 
   const stopAutoplay = () => {
     if (autoplayTimer) {
@@ -40,11 +76,13 @@ export function activate(context: vscode.ExtensionContext): void {
       autoplayTimer = null;
     }
     statusbar.setAutoplay(false);
+    sidebar.setAutoplay(false);
   };
   const startAutoplay = () => {
     stopAutoplay();
-    const interval = vscode.workspace.getConfiguration('bitvanes.autoplay').get<number>('intervalMs', 6000);
+    const interval = vscode.workspace.getConfiguration('bitvanes.autoplay').get<number>('intervalMs', 4000);
     statusbar.setAutoplay(true);
+    sidebar.setAutoplay(true);
     autoplayTimer = setInterval(() => {
       const st = director?.state;
       if (!st) {
@@ -61,19 +99,9 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   director.onDidChangeState((st) => {
-    tree.update(st);
     statusbar.update(st);
-    treeView.message = st
-      ? `Step ${st.current + 1} of ${st.plan.totalSteps} — ${st.plan.summary.replace(/\n/g, ' ').slice(0, 90)}`
-      : undefined;
-    if (st) {
-      const node = tree.findStepNode(st.current);
-      if (node) {
-        treeView.reveal(node, { select: true, focus: false }).then(undefined, () => {});
-      }
-    } else {
-      stopAutoplay();
-    }
+    sidebar.setState(st);
+    if (!st) stopAutoplay();
   });
 
   const readText = (absPath: string) => fs.readFile(absPath, 'utf8');
@@ -99,6 +127,7 @@ export function activate(context: vscode.ExtensionContext): void {
               root,
               vscode.workspace.getConfiguration('bitvanes.llm').get('maxSteps', 12),
             );
+            sidebar.reveal();
             director?.start(plan);
             const secs = ((Date.now() - t0) / 1000).toFixed(1);
             void vscode.window.showInformationMessage(
@@ -143,6 +172,7 @@ export function activate(context: vscode.ExtensionContext): void {
             await refinePlanRanges(plan, resolver, root, readText);
           }
 
+          sidebar.reveal();
           director?.start(plan);
           const secs = ((Date.now() - t0) / 1000).toFixed(1);
           void vscode.window.showInformationMessage(
@@ -182,6 +212,7 @@ export function activate(context: vscode.ExtensionContext): void {
     );
     if (!picked) return;
     await vscode.workspace.getConfiguration('bitvanes.walkthrough').update('style', picked.id, vscode.ConfigurationTarget.Global);
+    sidebar.setStyle(picked.id);
     void vscode.window.showInformationMessage(`BitVanes: walkthrough style set to ${picked.label}.`);
   });
   register('bitvanes.nextStep', () => {
@@ -301,7 +332,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (picked) director?.jump(picked.index);
   };
 
-  context.subscriptions.push(director, treeView, statusbar, { dispose: stopAutoplay });
+  context.subscriptions.push(director, statusbar, { dispose: stopAutoplay });
 }
 
 export function deactivate(): void {

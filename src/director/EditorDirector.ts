@@ -173,8 +173,8 @@ export class EditorDirector implements vscode.Disposable {
     if (step.securityNote) {
       m.appendMarkdown(`> $(alert) **Security:** ${mdEscape(step.securityNote)}\n\n`);
     }
-    m.appendMarkdown(`---\n\`[\` previous · \`]\` next · [browse steps](command:bitvanes.explainStep)`);
-    m.isTrusted = { enabledCommands: ['bitvanes.explainStep'] };
+    m.appendMarkdown(`---\n[◀ prev](command:bitvanes.prevStep) · [browse steps](command:bitvanes.explainStep) · [next ▶](command:bitvanes.nextStep)`);
+    m.isTrusted = { enabledCommands: ['bitvanes.explainStep', 'bitvanes.nextStep', 'bitvanes.prevStep'] };
     return m;
   }
 
