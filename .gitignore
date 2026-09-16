@@ -7,9 +7,9 @@ out/
 # Packaging
 *.vsix
 
-# Webview / website build output
-website/docs/.vitepress/cache/
-website/docs/.vitepress/dist/
+# Website build output
+web/docs/.vitepress/cache/
+web/docs/.vitepress/dist/
 
 # Environment / secrets
 .env

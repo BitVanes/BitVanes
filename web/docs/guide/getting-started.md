@@ -69,6 +69,6 @@ Run **BitVanes: Set API Key for External LLM Provider**, pick a preset, paste yo
 
 | Key | Action |
 |---|---|
-| `]` | Next step (while a walkthrough is active) |
-| `[` | Previous step |
+| `alt+]` / `alt+[` | Next / previous step (works anywhere while a walkthrough is active) |
+| `]` / `[` | Next / previous step when focus is outside the editor (panel, status bar) |
 | `Esc` | Exit walkthrough (from the editor) |
