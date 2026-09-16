@@ -23,9 +23,12 @@ interface VscodeLmApi {
   selectChatModels(selector?: vscode.LanguageModelChatSelector): Thenable<vscode.LanguageModelChat[]>;
 }
 
-const MODEL_PREFERENCE = [
-  /claude/i,
+const MODEL_PREFERENCE: RegExp[] = [
+  /gpt-5/i,
   /gpt-4\.1|gpt-4o/i,
+  /claude.*sonnet/i,
+  /claude/i,
+  /gemini-2\.5/i,
   /gemini-2/i,
   /o[34]/i,
 ];
@@ -36,41 +39,75 @@ function lmApi(): VscodeLmApi | undefined {
 
 export class VscodeLmClient implements LlmClient {
   readonly id = 'vscode-lm';
-  readonly label: string;
-  private model: vscode.LanguageModelChat | null = null;
-  private probe: Promise<vscode.LanguageModelChat | null> | null = null;
+  private modelsProbe: Promise<vscode.LanguageModelChat[]> | null = null;
+  private preferred: vscode.LanguageModelChat | null = null;
+  private readonly failed = new Set<string>();
 
-  constructor() {
-    this.label = 'VS Code Copilot (Language Model API)';
+  get label(): string {
+    if (this.preferred) return `VS Code Copilot (${this.preferred.name || this.preferred.id})`;
+    return 'VS Code Copilot (Language Model API)';
   }
 
   async available(): Promise<boolean> {
-    return (await this.probeModel()) !== null;
+    return (await this.listModels()).length > 0;
   }
 
-  private probeModel(): Promise<vscode.LanguageModelChat | null> {
-    if (!this.probe) {
-      this.probe = (async () => {
+  private listModels(): Promise<vscode.LanguageModelChat[]> {
+    if (!this.modelsProbe) {
+      this.modelsProbe = (async () => {
         const lm = lmApi();
-        if (!lm) return null;
+        if (!lm) return [];
         try {
           const models = await lm.selectChatModels({});
-          if (!Array.isArray(models) || models.length === 0) return null;
-          const preferred =
-            MODEL_PREFERENCE.map((re) => models.find((m) => re.test(`${m.name} ${m.family} ${m.id}`))).find(Boolean) ??
-            models[0];
-          return preferred ?? null;
+          if (!Array.isArray(models)) return [];
+          const seen = new Set<string>();
+          return models.filter((m) => {
+            if (seen.has(m.id)) return false;
+            seen.add(m.id);
+            return true;
+          });
         } catch {
-          return null;
+          return [];
         }
       })();
     }
-    return this.probe;
+    return this.modelsProbe;
+  }
+
+  private rank(models: vscode.LanguageModelChat[]): vscode.LanguageModelChat[] {
+    return [...models].sort((a, b) => {
+      if (a.id === this.preferred?.id) return -1;
+      if (b.id === this.preferred?.id) return 1;
+      return preferenceScore(b) - preferenceScore(a);
+    });
   }
 
   async complete(req: LlmCompleteRequest, token?: vscode.CancellationToken): Promise<string> {
-    const model = await this.probeModel();
-    if (!model) throw new Error('no VS Code language models available');
+    const models = (await this.listModels()).filter((m) => !this.failed.has(m.id));
+    const ordered = this.rank(models);
+    if (ordered.length === 0) throw new Error('no usable VS Code language models (all candidates failed this session)');
+
+    const errors: string[] = [];
+    for (const model of ordered.slice(0, 5)) {
+      if (token?.isCancellationRequested) throw new Error('request cancelled');
+      try {
+        const out = await this.runOnce(model, req, token);
+        this.preferred = model;
+        return out;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.failed.add(model.id);
+        errors.push(`${model.name || model.id}: ${msg}`);
+      }
+    }
+    throw new Error(`every Copilot model rejected the request — ${errors.join(' | ')}`);
+  }
+
+  private async runOnce(
+    model: vscode.LanguageModelChat,
+    req: LlmCompleteRequest,
+    token?: vscode.CancellationToken,
+  ): Promise<string> {
     const messages = [
       vscode.LanguageModelChatMessage.Assistant(req.system),
       vscode.LanguageModelChatMessage.User(req.user),
@@ -81,8 +118,17 @@ export class VscodeLmClient implements LlmClient {
       out += chunk;
       if (out.length > 1_000_000) break;
     }
+    if (out.trim() === '') throw new Error('empty response');
     return out;
   }
+}
+
+function preferenceScore(model: vscode.LanguageModelChat): number {
+  const s = `${model.name} ${model.family} ${model.id}`;
+  for (let i = 0; i < MODEL_PREFERENCE.length; i++) {
+    if (MODEL_PREFERENCE[i]!.test(s)) return MODEL_PREFERENCE.length - i;
+  }
+  return 0;
 }
 
 export interface OpenAiCompatibleOptions {
