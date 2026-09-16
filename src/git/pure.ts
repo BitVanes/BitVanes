@@ -15,6 +15,48 @@ export interface DiffFile {
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
+/**
+ * Decode a path as emitted by git: strips the trailing TAB that git appends to
+ * `+++`/`---` lines for space-containing paths, and unquotes the C-style
+ * quoted form (`"b/\303\251t\303\251.rs"`) git uses for non-ASCII/special paths.
+ * Octal escapes are UTF-8 bytes and are decoded as sequences.
+ */
+export function decodeGitPath(raw: string): string {
+  let s = raw.replace(/\t$/, '');
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+    const inner = s.slice(1, -1);
+    const bytes: number[] = [];
+    let out = '';
+    const decoder = new TextDecoder('utf-8', { fatal: false });
+    const flush = (): void => {
+      if (bytes.length > 0) {
+        out += decoder.decode(Uint8Array.from(bytes));
+        bytes.length = 0;
+      }
+    };
+    for (let i = 0; i < inner.length; i++) {
+      const m = /^\\([0-7]{1,3})/.exec(inner.slice(i));
+      if (m && m[1] !== undefined) {
+        bytes.push(parseInt(m[1], 8));
+        i += m[0].length - 1;
+        continue;
+      }
+      if (inner[i] === '\\' && i + 1 < inner.length) {
+        flush();
+        const c = inner[i + 1]!;
+        out += c === 'n' ? '\n' : c === 't' ? '\t' : c;
+        i += 1;
+        continue;
+      }
+      flush();
+      out += inner[i];
+    }
+    flush();
+    s = out;
+  }
+  return s;
+}
+
 export function parseUnifiedDiff(text: string): DiffFile[] {
   const files: DiffFile[] = [];
   let current: DiffFile | null = null;
@@ -23,8 +65,8 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
     const diffGit = /^diff --git (?:"?a\/(.+?)"?) (?:"?b\/(.+?)"?)$/.exec(line);
     if (diffGit && diffGit[1] && diffGit[2]) {
       current = {
-        path: diffGit[2],
-        absPath: diffGit[2],
+        path: decodeGitPath(diffGit[2]),
+        absPath: decodeGitPath(diffGit[2]),
         status: 'M',
         hunks: [],
       };
@@ -46,20 +88,24 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
     const renameFrom = /^rename from (.+)$/.exec(line);
     if (renameFrom && renameFrom[1] && current) {
       current.status = 'R';
-      current.previousPath = renameFrom[1];
+      current.previousPath = decodeGitPath(renameFrom[1]);
       continue;
     }
     const renameTo = /^rename to (.+)$/.exec(line);
     if (renameTo && renameTo[1] && current) {
-      current.path = renameTo[1];
-      current.absPath = renameTo[1];
+      const to = decodeGitPath(renameTo[1]);
+      current.path = to;
+      current.absPath = to;
       continue;
     }
 
-    const plusPlus = /^\+\+\+ (?:b\/)?(.+)$/.exec(line);
-    if (plusPlus && plusPlus[1] && plusPlus[1] !== '/dev/null' && current && current.status !== 'R') {
-      current.path = plusPlus[1];
-      current.absPath = plusPlus[1];
+    const plusPlus = /^\+\+\+ (.+)$/.exec(line);
+    if (plusPlus && plusPlus[1] && current && current.status !== 'R') {
+      const p = decodeGitPath(plusPlus[1]).replace(/^b\//, '');
+      if (p && p !== '/dev/null') {
+        current.path = p;
+        current.absPath = p;
+      }
       continue;
     }
 
@@ -76,6 +122,12 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
   }
 
   return files.map((f) => ({ ...f, hunks: f.hunks.filter((h) => h.newCount > 0) }));
+}
+
+/** A hunk covering an entire file's current content — used for untracked files. */
+export function wholeFileHunk(text: string): DiffHunk {
+  const count = Math.max(1, text.replace(/\n$/, '').split('\n').length);
+  return { oldStart: 0, oldCount: 0, newStart: 1, newCount: count };
 }
 
 export function hunkLineRanges(file: DiffFile): Array<{ start: number; end: number }> {

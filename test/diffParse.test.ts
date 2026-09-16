@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseUnifiedDiff } from '../src/git/pure';
+import { decodeGitPath, parseUnifiedDiff, wholeFileHunk } from '../src/git/pure';
 
 const DIFF = `diff --git a/src/lib.rs b/src/lib.rs
 index 1234567..89abcde 100644
@@ -84,5 +84,88 @@ describe('parseUnifiedDiff', () => {
 
   it('returns empty for non-diff input', () => {
     expect(parseUnifiedDiff('hello world')).toEqual([]);
+  });
+});
+
+// The following fixtures match real `git diff` output shapes (verified against git):
+// - space-containing paths get a trailing TAB on the +++ line
+// - non-ASCII paths are C-quoted with octal escapes on both diff --git and +++
+describe('parseUnifiedDiff path quoting', () => {
+  it('parses paths containing spaces (trailing TAB marker)', () => {
+    const diff = [
+      'diff --git a/sp ace.rs b/sp ace.rs',
+      'index 1234567..89abcde 100644',
+      '--- a/sp ace.rs',
+      '+++ b/sp ace.rs\t',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files.length).toBe(1);
+    expect(files[0]!.path).toBe('sp ace.rs');
+  });
+
+  it('parses non-ASCII paths (quoted with octal escapes)', () => {
+    const diff = [
+      String.raw`diff --git "a/\303\251t\303\251.rs" "b/\303\251t\303\251.rs"`,
+      'new file mode 100644',
+      'index 0000000..89abcde',
+      '--- /dev/null',
+      String.raw`+++ "b/\303\251t\303\251.rs"`,
+      '@@ -0,0 +1 @@',
+      '+fn b(){}',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files.length).toBe(1);
+    expect(files[0]!.path).toBe('été.rs');
+    expect(files[0]!.status).toBe('A');
+  });
+
+  it('decodes quoted rename paths', () => {
+    const diff = [
+      String.raw`diff --git "a/old \303\251t\303\251.rs" "b/new \303\251t\303\251.rs"`,
+      'similarity index 90%',
+      String.raw`rename from "old \303\251t\303\251.rs"`,
+      String.raw`rename to "new \303\251t\303\251.rs"`,
+      'index aaa..bbb 100644',
+      '--- a/old file.rs',
+      '+++ b/new file.rs\t',
+      '@@ -5 +5 @@',
+      '-x = 1',
+      '+x = 2',
+    ].join('\n');
+    const files = parseUnifiedDiff(diff);
+    expect(files[0]!.status).toBe('R');
+    expect(files[0]!.previousPath).toBe('old été.rs');
+    expect(files[0]!.path).toBe('new été.rs');
+  });
+});
+
+describe('decodeGitPath', () => {
+  it('unquotes and unescapes octal', () => {
+    expect(decodeGitPath('"b/\\303\\251t\\303\\251.rs"')).toBe('b/été.rs');
+  });
+
+  it('strips the trailing TAB marker', () => {
+    expect(decodeGitPath('b/sp ace.rs\t')).toBe('b/sp ace.rs');
+  });
+
+  it('leaves plain paths untouched', () => {
+    expect(decodeGitPath('src/lib.rs')).toBe('src/lib.rs');
+  });
+});
+
+describe('wholeFileHunk', () => {
+  it('covers every line of the file', () => {
+    expect(wholeFileHunk('a\nb\nc\n')).toEqual({ oldStart: 0, oldCount: 0, newStart: 1, newCount: 3 });
+  });
+
+  it('handles single-line files without a trailing newline', () => {
+    expect(wholeFileHunk('a')).toEqual({ oldStart: 0, oldCount: 0, newStart: 1, newCount: 1 });
+  });
+
+  it('never produces an empty hunk', () => {
+    expect(wholeFileHunk('').newCount).toBe(1);
   });
 });

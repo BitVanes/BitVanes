@@ -19,11 +19,11 @@ Run **BitVanes: Set Walkthrough Style** (also in the panel's ⋯ menu) or set `b
 ::: code-group
 
 ```text [Marketplace]
-Search "BitVanes" in the VS Code Extensions view (coming soon).
+Search "BitVanes" in the VS Code Extensions view.
 ```
 
 ```bash [From release]
-code --install-extension bitvanes-<version>.vsix
+code --install-extension bitvanes-v<version>.vsix
 ```
 
 ```bash [From source]
@@ -36,7 +36,7 @@ cd BitVanes && npm ci && npm run compile
 
 ## Your first tour
 
-1. Make a change in a git repo (or just open a function you want to understand).
+1. Make a change in a git repo — brand-new untracked files count too — or just open a function you want to understand.
 2. Run **BitVanes: Walkthrough Working Tree Changes** from the Command Palette — or **BitVanes: Walkthrough Code Path at Cursor** with your cursor inside a function. In a hurry? **Instant Walkthrough (No AI)** builds a local tour in under a second.
 3. The editor pans to the first step: the active statement is spotlighted, everything outside the enclosing function is dimmed, and a dotted border marks the scope.
 4. Step with `alt+]` / `alt+[`, or use the status-bar transport. **Hover the highlighted code** for the full narrative, variable transitions, and any security note.
@@ -84,5 +84,5 @@ Run **BitVanes: Set API Key for External LLM Provider**, pick a preset, paste yo
 | Key | Action |
 |---|---|
 | `alt+]` / `alt+[` | Next / previous step (works anywhere while a walkthrough is active) |
-| `]` / `[` | Next / previous step when focus is outside the editor (panel, status bar) |
-| `Esc` | Exit walkthrough (from the editor) |
+| `]` / `[` | Next / previous step when focus is outside the editor and terminal (panel, status bar) |
+| `Esc` | Exit walkthrough (from the editor) — or the ✕ in the status bar, any time |

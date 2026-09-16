@@ -1,6 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import type { WalkthroughPlan, WalkthroughStep } from '../types/protocol';
+import type { Range, WalkthroughPlan, WalkthroughStep } from '../types/protocol';
+import { mdEscape, mdInline } from '../util/markdown';
+import { planRangeToPositions } from '../util/text';
 
 export interface WalkthroughState {
   plan: WalkthroughPlan;
@@ -16,6 +18,7 @@ export class EditorDirector implements vscode.Disposable {
   private chip?: vscode.TextEditorDecorationType;
   private plan?: WalkthroughPlan;
   private current = -1;
+  private navToken = 0;
 
   private readonly _onDidChangeState = new vscode.EventEmitter<WalkthroughState | null>();
   readonly onDidChangeState: vscode.Event<WalkthroughState | null> = this._onDidChangeState.event;
@@ -30,6 +33,7 @@ export class EditorDirector implements vscode.Disposable {
           this.reapply();
         }
       }),
+      vscode.window.onDidChangeActiveTextEditor(() => this.refreshForEditorChange()),
     );
   }
 
@@ -48,22 +52,22 @@ export class EditorDirector implements vscode.Disposable {
     this.jump(0);
   }
 
-  next(): void {
-    this.jump(this.current + 1);
+  next(opts?: { preserveFocus?: boolean }): void {
+    this.jump(this.current + 1, opts);
   }
 
-  prev(): void {
-    this.jump(this.current - 1);
+  prev(opts?: { preserveFocus?: boolean }): void {
+    this.jump(this.current - 1, opts);
   }
 
-  jump(index: number): void {
+  jump(index: number, opts?: { preserveFocus?: boolean }): void {
     if (!this.plan || this.plan.steps.length === 0) return;
     const clamped = Math.min(Math.max(0, index), this.plan.steps.length - 1);
     const step = this.plan.steps[clamped];
     if (!step) return;
     this.current = clamped;
     void vscode.commands.executeCommand('setContext', 'bitvanes.stepIndex', clamped);
-    void this.navigateToStep(step);
+    void this.navigateToStep(step, opts?.preserveFocus ?? false);
     this._onDidChangeState.fire(this.state);
   }
 
@@ -75,18 +79,20 @@ export class EditorDirector implements vscode.Disposable {
     this._onDidChangeState.fire(null);
   }
 
-  private async navigateToStep(step: WalkthroughStep): Promise<void> {
+  private async navigateToStep(step: WalkthroughStep, preserveFocus: boolean): Promise<void> {
     const abs = this.resolveAbs(step.filePath);
     if (!abs) {
       void vscode.window.showWarningMessage(`BitVanes: could not resolve ${step.filePath} in this workspace.`);
       return;
     }
+    const token = ++this.navToken;
     try {
       const doc = await vscode.workspace.openTextDocument(abs);
       const editor = await vscode.window.showTextDocument(doc, {
         viewColumn: vscode.ViewColumn.Active,
-        preserveFocus: false,
+        preserveFocus,
       });
+      if (token !== this.navToken) return; // superseded by a newer step
       const vsRange = toVsRange(step.range, doc);
       const scopeVs = step.scopeRange ? toVsRange(step.scopeRange, doc) : undefined;
       editor.revealRange(scopeVs ?? vsRange, vscode.TextEditorRevealType.InCenter);
@@ -104,11 +110,39 @@ export class EditorDirector implements vscode.Disposable {
   ): void {
     for (const e of vscode.window.visibleTextEditors) {
       if (e === editor) continue;
-      e.setDecorations(this.spotlight!, []);
-      e.setDecorations(this.dim!, []);
-      e.setDecorations(this.scope!, []);
-      e.setDecorations(this.chip!, []);
+      this.clearEditor(e);
     }
+    this.paint(editor, step, vsRange, scopeVs);
+  }
+
+  /** Re-apply (or clear) decorations after the active editor changed so the
+   *  walkthrough does not silently vanish (or linger) on tab switches. */
+  private refreshForEditorChange(): void {
+    const step = this.currentStep;
+    if (!step || !this.spotlight) return;
+    const abs = this.resolveAbs(step.filePath);
+    for (const e of vscode.window.visibleTextEditors) {
+      if (abs && e.document.uri.fsPath === abs) {
+        this.paint(e, step, toVsRange(step.range, e.document), step.scopeRange ? toVsRange(step.scopeRange, e.document) : undefined);
+      } else {
+        this.clearEditor(e);
+      }
+    }
+  }
+
+  private clearEditor(e: vscode.TextEditor): void {
+    e.setDecorations(this.spotlight!, []);
+    e.setDecorations(this.dim!, []);
+    e.setDecorations(this.scope!, []);
+    e.setDecorations(this.chip!, []);
+  }
+
+  private paint(
+    editor: vscode.TextEditor,
+    step: WalkthroughStep,
+    vsRange: vscode.Range,
+    scopeVs: vscode.Range | undefined,
+  ): void {
     editor.setDecorations(this.spotlight!, [{ range: vsRange, hoverMessage: this.stepHover(step) }]);
 
     const chipText = step.variable
@@ -134,8 +168,8 @@ export class EditorDirector implements vscode.Disposable {
     const focus = scopeVs ?? vsRange;
     const doc = editor.document;
     const dimRanges: vscode.Range[] = [];
-    if (focus.start.line > 0) {
-      dimRanges.push(new vscode.Range(0, 0, focus.start.line, 0));
+    if (focus.start.line > 1) {
+      dimRanges.push(new vscode.Range(0, 0, focus.start.line - 1, 0));
     }
     if (focus.end.line + 1 < doc.lineCount) {
       dimRanges.push(new vscode.Range(Math.min(focus.end.line + 1, doc.lineCount - 1), 0, doc.lineCount - 1, 0));
@@ -143,7 +177,7 @@ export class EditorDirector implements vscode.Disposable {
     editor.setDecorations(this.dim!, dimRanges);
 
     if (scopeVs) {
-      const scopeHover = new vscode.MarkdownString(undefined, true);
+      const scopeHover = new vscode.MarkdownString();
       scopeHover.supportThemeIcons = true;
       scopeHover.appendMarkdown(`**Scope** — enclosing function or block for this step.`);
       editor.setDecorations(this.scope!, [{ range: scopeVs, hoverMessage: scopeHover }]);
@@ -153,12 +187,12 @@ export class EditorDirector implements vscode.Disposable {
   }
 
   private stepHover(step: WalkthroughStep): vscode.MarkdownString {
-    const m = new vscode.MarkdownString(undefined, true);
+    const m = new vscode.MarkdownString();
     m.supportThemeIcons = true;
     const total = this.plan?.steps.length ?? 0;
     const icon = step.securityNote ? '$(alert)' : '$(symbol-misc)';
     m.appendMarkdown(`### ${icon} Step ${this.current + 1}/${total} — ${mdEscape(step.title)}\n\n`);
-    m.appendMarkdown(step.explanation.slice(0, MAX_HOVER_LEN));
+    m.appendMarkdown(mdEscape(step.explanation.slice(0, MAX_HOVER_LEN)));
     m.appendMarkdown('\n\n');
     if (step.variable) {
       const v = step.variable;
@@ -173,8 +207,8 @@ export class EditorDirector implements vscode.Disposable {
     if (step.securityNote) {
       m.appendMarkdown(`> $(alert) **Security:** ${mdEscape(step.securityNote)}\n\n`);
     }
-    m.appendMarkdown(`---\n[◀ prev](command:bitvanes.prevStep) · [browse steps](command:bitvanes.explainStep) · [next ▶](command:bitvanes.nextStep)`);
-    m.isTrusted = { enabledCommands: ['bitvanes.explainStep', 'bitvanes.nextStep', 'bitvanes.prevStep'] };
+    m.appendMarkdown('---\n[◀ prev](command:bitvanes.prevStep) · [browse](command:bitvanes.explainStep) · [next ▶](command:bitvanes.nextStep) · [✕ exit](command:bitvanes.exitWalkthrough)');
+    m.isTrusted = { enabledCommands: ['bitvanes.explainStep', 'bitvanes.nextStep', 'bitvanes.prevStep', 'bitvanes.exitWalkthrough'] };
     return m;
   }
 
@@ -183,33 +217,39 @@ export class EditorDirector implements vscode.Disposable {
     if (!step) return;
     const editor = vscode.window.activeTextEditor;
     if (!editor) return;
+    const abs = this.resolveAbs(step.filePath);
+    if (!abs || editor.document.uri.fsPath !== abs) return;
     const doc = editor.document;
     const vsRange = toVsRange(step.range, doc);
     const scopeVs = step.scopeRange ? toVsRange(step.scopeRange, doc) : undefined;
-    this.applyDecorations(editor, step, vsRange, scopeVs);
+    this.paint(editor, step, vsRange, scopeVs);
   }
 
   private clearAllDecorations(): void {
     for (const e of vscode.window.visibleTextEditors) {
-      e.setDecorations(this.spotlight!, []);
-      e.setDecorations(this.dim!, []);
-      e.setDecorations(this.scope!, []);
-      e.setDecorations(this.chip!, []);
+      this.clearEditor(e);
     }
   }
 
   private resolveAbs(filePath: string): string | undefined {
     const norm = filePath.replace(/\\/g, '/');
-    if (path.isAbsolute(norm)) return norm;
     const root = this.getRoot();
+    if (path.isAbsolute(norm)) {
+      if (!root) return norm;
+      const r = root.replace(/[\\/]+$/, '');
+      return norm === r || norm.startsWith(`${r}/`) ? norm : undefined;
+    }
     if (!root) return undefined;
-    return path.resolve(root, norm);
+    const abs = path.resolve(root, norm);
+    const r = root.replace(/[\\/]+$/, '');
+    return abs === r || abs.startsWith(r + path.sep) ? abs : undefined;
   }
 
   private rebuildDecorations(): void {
     this.spotlight?.dispose();
     this.dim?.dispose();
     this.scope?.dispose();
+    this.chip?.dispose();
 
     const cfg = vscode.workspace.getConfiguration('bitvanes.editor');
     const color = normalizeHex(cfg.get<string>('spotlightColor', '#f59e0b')) ?? '#f59e0b';
@@ -263,13 +303,9 @@ function shorten(v: string): string {
   return t.length > 32 ? `${t.slice(0, 31)}…` : t;
 }
 
-function toVsRange(r: { startLine: number; startCol: number; endLine: number; endCol: number }, doc: vscode.TextDocument): vscode.Range {
-  const maxLine = doc.lineCount - 1;
-  const startLine = Math.min(Math.max(0, r.startLine - 1), maxLine);
-  const endLine = Math.min(Math.max(startLine, r.endLine - 1), maxLine);
-  const startCol = Math.min(Math.max(0, r.startCol - 1), doc.lineAt(startLine).text.length);
-  const endCol = Math.min(Math.max(0, r.endCol - 1), doc.lineAt(endLine).text.length);
-  return new vscode.Range(startLine, startCol, endLine, Math.max(startLine === endLine ? startCol : 0, endCol));
+function toVsRange(r: Range, doc: vscode.TextDocument): vscode.Range {
+  const p = planRangeToPositions(r, doc.lineCount, (l) => doc.lineAt(l).text);
+  return new vscode.Range(p.startLine, p.startCharacter, p.endLine, p.endCharacter);
 }
 
 function normalizeHex(hex: string): string | undefined {
@@ -288,14 +324,6 @@ function withAlpha(hex: string, alpha: number): string {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function mdEscape(s: string): string {
-  return s.replace(/([\\`*_{}[\]()#+!~|<>])/g, '\\$1');
-}
-
-function mdInline(s: string): string {
-  return s.replace(/`/g, "'").replace(/\n/g, ' ').slice(0, 120);
 }
 
 export function actionIcon(action: string): string {

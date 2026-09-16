@@ -8,15 +8,20 @@ import { LlmManager } from './llm/LlmManager';
 import type { WalkthroughStyle } from './llm/prompts';
 import { PlanValidationError } from './types/protocol';
 import { buildDiffRequest, buildSelectionRequest, refinePlanRanges } from './pipeline/contextBuilder';
-import { buildLocalPlan } from './pipeline/localPlan';
+import { buildLocalPlan, MAX_FILES as LOCAL_MAX_FILES } from './pipeline/localPlan';
 import { StatusBarController } from './views/StatusBarController';
 import { WalkthroughSidebarProvider } from './views/WalkthroughSidebarProvider';
-import { toDisplayPath } from './util/text';
+import { toDisplayPath, toRelativePath } from './util/text';
 
 class UserError extends Error {}
 
 function normalizeStyle(v: unknown): WalkthroughStyle {
   return v === 'expert' || v === 'learner' ? v : 'standard';
+}
+
+function isLoopback(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  return h === 'localhost' || h === '::1' || h.startsWith('127.');
 }
 
 let director: EditorDirector | undefined;
@@ -83,19 +88,19 @@ export function activate(context: vscode.ExtensionContext): void {
     const interval = vscode.workspace.getConfiguration('bitvanes.autoplay').get<number>('intervalMs', 4000);
     statusbar.setAutoplay(true);
     sidebar.setAutoplay(true);
-    autoplayTimer = setInterval(() => {
-      const st = director?.state;
-      if (!st) {
-        stopAutoplay();
-        return;
-      }
-      if (st.current >= st.plan.totalSteps - 1) {
-        stopAutoplay();
-        void vscode.window.setStatusBarMessage('BitVanes: walkthrough complete.', 4000);
-        return;
-      }
-      director?.next();
-    }, Math.max(1000, interval));
+      autoplayTimer = setInterval(() => {
+        const st = director?.state;
+        if (!st) {
+          stopAutoplay();
+          return;
+        }
+        if (st.current >= st.plan.totalSteps - 1) {
+          stopAutoplay();
+          void vscode.window.setStatusBarMessage('BitVanes: walkthrough complete.', 4000);
+          return;
+        }
+        director?.next({ preserveFocus: true });
+      }, Math.max(1000, interval));
   };
 
   director.onDidChangeState((st) => {
@@ -108,6 +113,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const runPipeline = async (kind: 'diff' | 'staged' | 'selection' | 'instant') => {
     const t0 = Date.now();
+    stopAutoplay();
     try {
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, cancellable: true, title: 'BitVanes: generating walkthrough…' },
@@ -116,6 +122,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
           if (kind === 'instant') {
             if (!root) throw new UserError('Open a folder to walkthrough its changes.');
+            if (!(await GitProvider.isGitRepo(root))) throw new UserError('This workspace is not a Git repository.');
             progress.report({ message: 'reading diff…' });
             const files = await GitProvider.diff(root, false);
             if (files.length === 0) throw new UserError('No working-tree changes to walkthrough.');
@@ -130,17 +137,21 @@ export function activate(context: vscode.ExtensionContext): void {
             sidebar.reveal();
             director?.start(plan);
             const secs = ((Date.now() - t0) / 1000).toFixed(1);
+            const covered = Math.min(files.length, LOCAL_MAX_FILES);
+            const cov = covered < files.length ? ` Covers ${covered} of ${files.length} changed files (largest first).` : '';
             void vscode.window.showInformationMessage(
-              `BitVanes: ${plan.totalSteps}-step instant walkthrough in ${secs}s (local, no model).`,
+              `BitVanes: ${plan.totalSteps}-step instant walkthrough in ${secs}s (local, no model).${cov}`,
             );
             return;
           }
 
           let request;
+          let allowedPaths = new Set<string>();
           if (kind === 'selection') {
             const sel = getActiveSelection();
             if (!sel) throw new UserError('Open a file and place the cursor in (or select) the code to walkthrough.');
             request = await buildSelectionRequest(sel, resolver);
+            allowedPaths = new Set([sel.filePath]);
           } else {
             if (!root) throw new UserError('Open a folder to walkthrough its changes.');
             if (!(await GitProvider.isGitRepo(root))) throw new UserError('This workspace is not a Git repository.');
@@ -149,6 +160,7 @@ export function activate(context: vscode.ExtensionContext): void {
             if (files.length === 0) {
               throw new UserError(kind === 'staged' ? 'No staged changes to walkthrough.' : 'No working-tree changes to walkthrough.');
             }
+            allowedPaths = new Set(files.map((f) => toRelativePath(root, f.absPath)));
             const contextLines = vscode.workspace.getConfiguration('bitvanes.llm').get<number>('contextLines', 6);
             request = await buildDiffRequest(files, resolver, readText, contextLines, root);
           }
@@ -167,6 +179,19 @@ export function activate(context: vscode.ExtensionContext): void {
             token,
           );
 
+          // Defense in depth: the model must only reference files it was shown.
+          const kept = plan.steps.filter((s) => allowedPaths.has(s.filePath));
+          if (kept.length === 0) {
+            throw new UserError('The model referenced files outside this walkthrough — nothing to show. Try again or switch models.');
+          }
+          if (kept.length < plan.steps.length) {
+            plan.steps = kept;
+            plan.totalSteps = kept.length;
+            kept.forEach((s, i) => {
+              s.stepIndex = i;
+            });
+          }
+
           if (root) {
             progress.report({ message: 'aligning steps to syntax…' });
             await refinePlanRanges(plan, resolver, root, readText);
@@ -175,8 +200,12 @@ export function activate(context: vscode.ExtensionContext): void {
           sidebar.reveal();
           director?.start(plan);
           const secs = ((Date.now() - t0) / 1000).toFixed(1);
+          const cov =
+            request.coverage && request.coverage.total > request.coverage.included
+              ? ` Covers ${request.coverage.included} of ${request.coverage.total} changed files (largest first).`
+              : '';
           void vscode.window.showInformationMessage(
-            `BitVanes: ${plan.totalSteps}-step walkthrough in ${secs}s via ${provider}. Hover the highlight or press alt+] to step.`,
+            `BitVanes: ${plan.totalSteps}-step walkthrough in ${secs}s via ${provider}. Hover the highlight or press alt+] to step.${cov}`,
           );
         },
       );
@@ -259,8 +288,23 @@ export function activate(context: vscode.ExtensionContext): void {
       })) ?? '';
       if (!url) return;
     }
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      void vscode.window.showErrorMessage('BitVanes: invalid base URL — include the scheme, e.g. http://localhost:11434/v1');
+      return;
+    }
+    if (parsed.protocol !== 'https:' && !isLoopback(parsed.hostname)) {
+      const proceed = await vscode.window.showWarningMessage(
+        `BitVanes: ${parsed.protocol}// sends the API key unencrypted to ${parsed.host}. Continue anyway?`,
+        { modal: true },
+        'Send key unencrypted',
+      );
+      if (!proceed) return;
+    }
     const key = await vscode.window.showInputBox({
-      prompt: `API key for ${new URL(url).host} (stored in VS Code SecretStorage — never written to settings)`,
+      prompt: `API key for ${parsed.host} (stored in VS Code SecretStorage — never written to settings)`,
       password: true,
       ignoreFocusOut: true,
     });
@@ -273,13 +317,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }));
     if (model === undefined) return;
 
-    let host: string;
-    try {
-      host = new URL(url).host;
-    } catch {
-      void vscode.window.showErrorMessage('BitVanes: invalid base URL.');
-      return;
-    }
+    const host = parsed.host;
     await llm.setApiKey(host, key.trim());
     const cfg = vscode.workspace.getConfiguration('bitvanes.llm');
     await cfg.update('provider', 'openai-compatible', vscode.ConfigurationTarget.Global);

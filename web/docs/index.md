@@ -34,5 +34,5 @@ features:
     details: GitHub Copilot via the VS Code Language Model API out of the box, or point it at Ollama, vLLM, LM Studio, OpenAI, Anthropic, or OpenRouter. Keys stay in SecretStorage.
   - icon: ⚡
     title: Instant, offline tours
-    details: Need speed or no model at all? Instant mode builds a local AST walkthrough in under a second — and unsupported languages fall back to line-based heuristics instead of crashing.
+    details: Need speed or no model at all? Instant mode builds a local AST walkthrough in under a second — brand-new untracked files included, and unsupported languages fall back to line-based heuristics instead of crashing.
 ---

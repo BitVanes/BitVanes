@@ -10,3 +10,12 @@ vitest.config.ts
 eslint.config.mjs
 node_modules/.cache/**
 !dist/**
+.gitignore
+**/*.map
+node_modules/web-tree-sitter/debug/**
+node_modules/web-tree-sitter/lib/**
+node_modules/web-tree-sitter/src/**
+node_modules/web-tree-sitter/tree-sitter.js
+node_modules/web-tree-sitter/tree-sitter.wasm
+node_modules/web-tree-sitter/README.md
+node_modules/web-tree-sitter/web-tree-sitter.d.ts

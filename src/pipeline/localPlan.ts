@@ -2,8 +2,9 @@ import type { TreeSitterResolver, NodeCategory, SyntaxNode } from '../ast/TreeSi
 import type { DiffFile } from '../git/pure';
 import { hunkLineRanges } from '../git/pure';
 import type { WalkthroughPlan, WalkthroughStep, VariableMutation } from '../types/protocol';
+import { toRelativePath } from '../util/text';
 
-const MAX_FILES = 12;
+export const MAX_FILES = 12;
 const MAX_NODES_PER_HUNK = 6;
 const MAX_SOURCE_BYTES = 2_000_000;
 
@@ -17,9 +18,14 @@ export async function buildLocalPlan(
   maxSteps: number,
 ): Promise<WalkthroughPlan> {
   const steps: WalkthroughStep[] = [];
+  const seen = new Set<string>();
+  let covered = 0;
 
-  for (const f of files.slice(0, MAX_FILES)) {
+  // Largest changes first so the file cap drops the least important files.
+  const ordered = [...files].sort((a, b) => totalChangedLines(b) - totalChangedLines(a));
+  for (const f of ordered.slice(0, MAX_FILES)) {
     if (steps.length >= maxSteps) break;
+    covered++;
     let source: string;
     try {
       source = await readText(f.absPath);
@@ -28,7 +34,7 @@ export async function buildLocalPlan(
     }
     source = source.slice(0, MAX_SOURCE_BYTES);
     const ast = await resolver.parse(f.absPath, source);
-    const rel = relPath(workspaceRoot, f.absPath);
+    const rel = toRelativePath(workspaceRoot, f.absPath);
 
     for (const hunk of hunkLineRanges(f)) {
       const nodes = ast.nodes
@@ -38,6 +44,9 @@ export async function buildLocalPlan(
 
       for (const node of nodes) {
         if (steps.length >= maxSteps) break;
+        const key = `${rel}:${node.range.startLine}-${node.range.endLine}`;
+        if (seen.has(key)) continue; // two hunks touching the same statement
+        seen.add(key);
         const scope = resolver.enclosingScope(ast, source, node.range.startLine);
         steps.push(stepFor(node, rel, scope?.range, scope?.name));
       }
@@ -52,8 +61,13 @@ export async function buildLocalPlan(
     s.stepIndex = i;
   });
 
+  const fileLabel =
+    covered < files.length
+      ? `${covered} of ${files.length} changed files`
+      : `${files.length} changed file${files.length === 1 ? '' : 's'}`;
+
   return {
-    summary: `Instant walkthrough — ${files.length} changed file${files.length === 1 ? '' : 's'} (local AST analysis, no model)`,
+    summary: `Instant walkthrough — ${fileLabel} (local AST analysis, no model)`,
     entryPoint: steps[0]!.filePath,
     totalSteps: steps.length,
     steps,
@@ -154,9 +168,8 @@ function intersects(node: SyntaxNode, hunk: { start: number; end: number }): boo
   return node.range.startLine <= hunk.end && node.range.endLine >= hunk.start;
 }
 
-function relPath(root: string, absPath: string): string {
-  const rel = absPath.startsWith(root) ? absPath.slice(root.length).replace(/^\/+/, '') : absPath;
-  return rel.replace(/\\/g, '/');
+function totalChangedLines(f: DiffFile): number {
+  return hunkLineRanges(f).reduce((acc, h) => acc + (h.end - h.start + 1), 0);
 }
 
 export type { NodeCategory };

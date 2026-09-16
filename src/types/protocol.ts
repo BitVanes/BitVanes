@@ -145,41 +145,52 @@ export function coerceRange(raw: unknown, issues: PlanIssue[], field: string): R
     return undefined;
   }
   let startLine = num(raw['startLine']);
-  let startCol = num(raw['startCol']) ?? 1;
   let endLine = num(raw['endLine']);
-  let endCol = num(raw['endCol']) ?? 1;
+  const startColRaw = num(raw['startCol']);
+  const endColRaw = num(raw['endCol']);
 
   if (startLine === undefined || endLine === undefined) {
     issues.push({ field, message: 'range requires numeric startLine and endLine' });
     return undefined;
   }
 
-  if (startLine === 0 || endLine === 0 || startCol === 0 || endCol === 0) {
+  // A 0 startLine is the only unambiguous evidence of 0-based lines; shift the
+  // lines. Columns are handled independently below so that 0-based columns
+  // (a very common partial confusion) never shift the line numbers.
+  if (startLine === 0) {
     startLine += 1;
     endLine += 1;
-    startCol += 1;
-    endCol += 1;
-    issues.push({ field, message: '0-based coordinates detected; normalized to 1-based' });
+    issues.push({ field, message: '0-based line coordinates detected; normalized to 1-based' });
+  } else if (endLine < 1) {
+    // e.g. {startLine: 10, endLine: 0} — collapse instead of inventing a span.
+    endLine = startLine;
+    issues.push({ field, message: 'endLine below 1; collapsed to startLine' });
   }
+
+  // startCol clamps to column 1; an omitted endCol means "to end of line" and
+  // uses the end-of-line sentinel (later clamped to the real line length).
+  if (startColRaw === 0 || endColRaw === 0) {
+    issues.push({ field, message: '0-based column detected; clamped to 1' });
+  }
+  const startCol = Math.max(1, startColRaw ?? 1);
+  const endCol = Math.max(1, endColRaw ?? MAX_COLS);
 
   startLine = Math.max(1, Math.min(startLine, MAX_LINES));
   endLine = Math.max(1, Math.min(endLine, MAX_LINES));
-  startCol = Math.max(1, Math.min(startCol, MAX_COLS));
-  endCol = Math.max(1, Math.min(endCol, MAX_COLS));
+  let safeStartCol = Math.min(startCol, MAX_COLS);
+  let safeEndCol = Math.min(endCol, MAX_COLS);
 
   if (endLine < startLine) {
     [startLine, endLine] = [endLine, startLine];
   }
-  if (endLine === startLine && endCol < startCol) {
-    [startCol, endCol] = [endCol, startCol];
+  if (endLine === startLine && safeEndCol < safeStartCol) {
+    [safeStartCol, safeEndCol] = [safeEndCol, safeStartCol];
   }
-  if (startCol >= MAX_COLS || endCol >= MAX_COLS) {
+  if ((startColRaw !== undefined && startColRaw >= MAX_COLS) || (endColRaw !== undefined && endColRaw >= MAX_COLS)) {
     issues.push({ field, message: 'suspiciously large column values; end-of-line assumed' });
-    startCol = Math.min(startCol, MAX_COLS);
-    endCol = Math.min(endCol, MAX_COLS);
   }
 
-  return { startLine, startCol, endLine, endCol };
+  return { startLine, startCol: safeStartCol, endLine, endCol: safeEndCol };
 }
 
 function coerceVariable(raw: unknown, issues: PlanIssue[], field: string): VariableMutation | undefined {

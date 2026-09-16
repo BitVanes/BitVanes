@@ -3,12 +3,12 @@ import { formatAstSummary } from '../llm/prompts';
 import type { TreeSitterResolver } from '../ast/TreeSitterResolver';
 import type { DiffFile, SelectionTarget } from '../git/GitProvider';
 import { hunkLineRanges } from '../git/pure';
-import { numberLines } from '../util/text';
+import { numberLines, toRelativePath } from '../util/text';
 
 export type ReadText = (absPath: string) => Promise<string>;
 export type GetDiff = () => Promise<DiffFile[]>;
 
-const MAX_FILES = 12;
+export const MAX_FILES = 12;
 const MAX_SOURCE_BYTES = 2_000_000;
 
 export function mergeWindows(
@@ -43,7 +43,9 @@ export async function buildDiffRequest(
   const contextFiles: ContextFile[] = [];
   let language: string | null = null;
 
-  for (const f of files.slice(0, MAX_FILES)) {
+  // Largest changes first so the file cap drops the least important files.
+  const ordered = [...files].sort((a, b) => totalChangedLines(b) - totalChangedLines(a));
+  for (const f of ordered.slice(0, MAX_FILES)) {
     let source: string;
     try {
       source = await readText(f.absPath);
@@ -62,7 +64,7 @@ export async function buildDiffRequest(
     const relevant = ast.nodes.filter((n) => hunks.some((h) => n.range.startLine >= h.start - 3 && n.range.startLine <= h.end + 3));
 
     contextFiles.push({
-      path: relPath(workspaceRoot, f.absPath),
+      path: toRelativePath(workspaceRoot, f.absPath),
       status: f.status,
       hunks,
       snippet,
@@ -73,7 +75,7 @@ export async function buildDiffRequest(
   if (contextFiles.length === 0) {
     throw new Error('No readable changed files found for the walkthrough.');
   }
-  return { mode: 'diff', language, files: contextFiles };
+  return { mode: 'diff', language, files: contextFiles, coverage: { included: contextFiles.length, total: files.length } };
 }
 
 export async function buildSelectionRequest(
@@ -136,12 +138,14 @@ export async function refinePlanRanges(
 }
 
 function resolveWithin(root: string, filePath: string): string | undefined {
-  const norm = filePath.replace(/\\/g, '/');
-  if (norm.startsWith('/') || /^[A-Za-z]:/.test(norm)) return norm;
-  return `${root.replace(/\/+$/, '')}/${norm}`;
+  const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const r = root.replace(/[\\/]+$/, '');
+  if (norm.startsWith('/') || /^[A-Za-z]:/.test(norm)) {
+    return norm === r || norm.startsWith(`${r}/`) ? norm : undefined;
+  }
+  return `${r}/${norm}`;
 }
 
-function relPath(root: string, absPath: string): string {
-  const rel = absPath.startsWith(root) ? absPath.slice(root.length).replace(/^\/+/, '') : absPath;
-  return rel.replace(/\\/g, '/');
+function totalChangedLines(f: DiffFile): number {
+  return hunkLineRanges(f).reduce((acc, h) => acc + (h.end - h.start + 1), 0);
 }

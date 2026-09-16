@@ -10,7 +10,7 @@ Built for reviewing exactly the kind of code where being wrong is expensive — 
 
 ## How it works
 
-1. **Ingest** — `bitvanes.walkthroughDiff` reads your unstaged or staged changes via `git diff --unified=0`; `bitvanes.walkthroughSelection` takes the function under your cursor.
+1. **Ingest** — `bitvanes.walkthroughDiff` reads your unstaged changes (tracked **and untracked** — brand-new AI-generated files included) via `git diff --unified=0` plus `git ls-files --others`; `bitvanes.walkthroughSelection` takes the function under your cursor.
 2. **Parse** — tree-sitter grammars (Rust, Go, Solidity, TypeScript/TSX, Python) extract declarations, assignments, and calls around every hunk. Unknown languages fall back to line-based heuristics — nothing crashes.
 3. **Generate** — an LLM produces a strict `WalkthroughPlan` JSON: ordered steps, exact 1-based ranges, variable transitions (`init → validate → mutate → commit → return`), and security notes where they matter.
 4. **Repair** — ranges are snapped back onto real AST nodes, so slightly-off model output still lands on the exact statement.
@@ -18,9 +18,9 @@ Built for reviewing exactly the kind of code where being wrong is expensive — 
 
 ## Install
 
-- **Marketplace:** search "BitVanes" (coming soon)
+- **Marketplace:** search "BitVanes" — [bitvanes.bitvanes](https://marketplace.visualstudio.com/items?itemName=bitvanes.bitvanes)
 - **From source:** `npm ci && npm run compile`, then open this folder in VS Code and press F5
-- **Prebuilt vsix:** grab the latest from [Releases](https://github.com/BitVanes/BitVanes/releases) and run `code --install-extension bitvanes-<version>.vsix`
+- **Prebuilt vsix:** grab the latest from [Releases](https://github.com/BitVanes/BitVanes/releases) and run `code --install-extension bitvanes-v<version>.vsix`
 
 ## Choosing a model
 
@@ -47,9 +47,11 @@ Built for reviewing exactly the kind of code where being wrong is expensive — 
 
 ## Security model
 
-- API keys are stored via `vscode.SecretStorage` (OS keychain-backed). There is no setting that accepts a key.
-- The extension makes exactly two kinds of network calls: the language-model endpoint you configure, and local `git` invocations. Nothing else phones home.
-- Grammar binaries are vendored into the repo with pinned SHA-256 checksums (`scripts/fetch-grammars.mjs --check` verifies them in CI).
+- API keys are stored via `vscode.SecretStorage` (OS keychain-backed). There is no setting that accepts a key, and keys are never logged.
+- The extension makes exactly these network calls: the language-model endpoint you configure, one-time localhost model-server detection (ports 11434/1234/8000) when provider is `auto`, and local `git` invocations. Nothing else phones home — no telemetry.
+- Model output is treated as untrusted: it is escaped before rendering in hovers and the sidebar, and steps may only reference the files the walkthrough was generated from.
+- `git diff` runs with `--no-textconv` and `--no-ext-diff`, so repository-configured diff drivers are never executed.
+- Grammar binaries are vendored into the repo with pinned SHA-256 checksums (`scripts/fetch-grammars.mjs --check` verifies them in CI **and** at package time).
 
 ## Development
 
@@ -57,14 +59,14 @@ Built for reviewing exactly the kind of code where being wrong is expensive — 
 npm ci
 node scripts/fetch-grammars.mjs   # vendor grammars (checksum-pinned)
 npm run typecheck && npm run lint
-npm test                          # 50 tests, incl. real tree-sitter WASM parses
+npm test                          # 85+ tests, incl. real tree-sitter WASM parses
 npm run compile                   # esbuild production bundle
 npm run package                   # vsce package
 ```
 
 Press F5 in VS Code to launch the Extension Development Host.
 
-Docs and demo: https://bitvanes.github.io/BitVanes/
+Docs and demo: https://bitvanes.com · Changes: [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 

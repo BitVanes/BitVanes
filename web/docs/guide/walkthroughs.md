@@ -4,10 +4,10 @@ BitVanes walkthroughs are read-only: they highlight and explain, but never edit 
 
 ## Diff walkthroughs
 
-- **BitVanes: Walkthrough Working Tree Changes** — traces `git diff` of unstaged edits.
+- **BitVanes: Walkthrough Working Tree Changes** — traces `git diff` of unstaged edits, **including brand-new untracked files** (whole-file walkthroughs — the core "my AI just wrote this" flow).
 - **BitVanes: Walkthrough Staged Changes** — traces what's staged (`git diff --cached`). Both are also one click away in the Source Control title menu.
 
-Hunks are parsed with `--unified=0`, padded with context lines, enriched with AST symbols around each change, and handed to the model as line-numbered context — the model returns steps that reference the **new** file content, so ranges always match what you see in the editor.
+Hunks are parsed with `--unified=0`, padded with context lines, enriched with AST symbols around each change, and handed to the model as line-numbered context — the model returns steps that reference the **new** file content, so ranges always match what you see in the editor. Large diffs are prioritized by change size (largest files first) and the completion toast reports exactly how many of your changed files the tour covers.
 
 ## Code-path walkthroughs
 
@@ -26,8 +26,8 @@ Every step gives you:
 
 ## Autoplay
 
-`BitVanes: Toggle Autoplay` advances the plan on an interval (default 6s, configurable via `bitvanes.autoplay.intervalMs`) and stops automatically at the last step — good for hands-free review or recording a demo.
+`BitVanes: Toggle Autoplay` advances the plan on an interval (default 4s, configurable via `bitvanes.autoplay.intervalMs`) without stealing your focus, and stops automatically at the last step — good for hands-free review or recording a demo.
 
 ## What the model returns
 
-Every plan conforms to one JSON schema (see `src/types/protocol.ts`). Validation is strict and self-healing: 0-based coordinates get normalized, invalid steps are dropped rather than failing the plan, and ranges that land slightly off a real syntax node are **snapped** to the nearest matching AST node before playback starts.
+Every plan conforms to one JSON schema (see `src/types/protocol.ts`). Validation is strict and self-healing: 0-based lines get normalized (columns are repaired independently so a half-0-based answer never shifts your steps), invalid steps are dropped rather than failing the plan, steps may only reference the files the walkthrough was generated from, and ranges that land slightly off a real syntax node are **snapped** to the nearest matching AST node before playback starts.

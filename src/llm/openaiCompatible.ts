@@ -39,21 +39,34 @@ export class OpenAiCompatibleClient {
     const abort = new AbortController();
     const sub = token?.onCancellationRequested(() => abort.abort());
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        signal: abort.signal,
-        body: JSON.stringify({
-          model: this.opts.modelId,
-          messages: [
-            { role: 'system', content: req.system },
-            { role: 'user', content: req.user },
-          ],
-          temperature: req.temperature,
-          max_tokens: req.maxTokens,
-          stream: false,
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers,
+          signal: AbortSignal.any([abort.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+          body: JSON.stringify({
+            model: this.opts.modelId,
+            messages: [
+              { role: 'system', content: req.system },
+              { role: 'user', content: req.user },
+            ],
+            temperature: req.temperature,
+            max_tokens: req.maxTokens,
+            stream: false,
+          }),
+        });
+      } catch (err) {
+        if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError') && !token?.isCancellationRequested) {
+          throw new Error(`request to ${hostOf(this.opts.baseUrl)} timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+        }
+        if (err instanceof TypeError) {
+          throw new Error(
+            `could not reach ${hostOf(this.opts.baseUrl)} — is the model server running? (e.g. \`ollama serve\`, then retry)`,
+          );
+        }
+        throw err;
+      }
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         throw new Error(`HTTP ${res.status} from ${hostOf(this.opts.baseUrl)}: ${body.slice(0, 300)}`);
@@ -70,6 +83,8 @@ export class OpenAiCompatibleClient {
     }
   }
 }
+
+const REQUEST_TIMEOUT_MS = 120_000;
 
 export function hostOf(url: string): string {
   try {

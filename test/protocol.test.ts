@@ -19,11 +19,31 @@ describe('coerceRange', () => {
     });
   });
 
-  it('normalizes 0-based coordinates to 1-based', () => {
+  it('normalizes 0-based lines to 1-based without shifting columns', () => {
     const issues: Array<{ field: string; message: string }> = [];
     const r = coerceRange({ startLine: 0, startCol: 4, endLine: 5, endCol: 20 }, issues, 'r');
-    expect(r).toEqual({ startLine: 1, startCol: 5, endLine: 6, endCol: 21 });
+    expect(r).toEqual({ startLine: 1, startCol: 4, endLine: 6, endCol: 20 });
     expect(issues.length).toBe(1);
+  });
+
+  it('keeps 1-based lines intact when only columns are 0-based', () => {
+    const issues: Array<{ field: string; message: string }> = [];
+    // A common model confusion: 1-based lines with 0-based columns. The line
+    // numbers must NOT shift.
+    const r = coerceRange({ startLine: 5, startCol: 0, endLine: 7, endCol: 12 }, issues, 'r');
+    expect(r).toEqual({ startLine: 5, startCol: 1, endLine: 7, endCol: 12 });
+    expect(issues.some((i) => /0-based column/.test(i.message))).toBe(true);
+  });
+
+  it('treats an omitted endCol as end-of-line', () => {
+    const r = coerceRange({ startLine: 3, startCol: 1, endLine: 8 }, [], 'r');
+    expect(r?.endCol).toBe(100_000);
+  });
+
+  it('repairs a nonsense endLine of 0 without inventing lines', () => {
+    const r = coerceRange({ startLine: 10, startCol: 2, endLine: 0, endCol: 5 }, [], 'r');
+    expect(r?.startLine).toBe(10);
+    expect(r?.endLine).toBe(10);
   });
 
   it('swaps inverted line ranges', () => {

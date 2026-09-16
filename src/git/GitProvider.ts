@@ -1,13 +1,17 @@
 import { spawn } from 'child_process';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { Range } from '../types/protocol';
 import { indentOf, expandToBlock } from '../util/text';
-import { parseUnifiedDiff } from './pure';
+import { parseUnifiedDiff, wholeFileHunk } from './pure';
 import type { DiffFile } from './pure';
 
 export { parseUnifiedDiff, hunkLineRanges } from './pure';
 export type { DiffFile, DiffHunk } from './pure';
+
+const MAX_UNTRACKED_FILES = 50;
+const MAX_UNTRACKED_BYTES = 2_000_000;
 
 export interface SelectionTarget {
   filePath: string;
@@ -63,12 +67,58 @@ export class GitProvider {
     }
   }
 
+  /** True repository root, even when the workspace folder is a subdirectory. */
+  static async repoRoot(startDir: string): Promise<string | undefined> {
+    try {
+      const out = await GitProvider.exec(['rev-parse', '--show-toplevel'], startDir);
+      const top = out.trim();
+      return top !== '' ? top : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   static async diff(root: string, staged: boolean): Promise<DiffFile[]> {
-    const args = ['diff', '--unified=0', '--no-color', '--no-ext-diff'];
+    // --no-textconv: never execute repo-configured textconv drivers
+    // --no-ext-diff: never execute repo-configured external diff tools
+    const args = ['diff', '--no-textconv', '--no-ext-diff', '--unified=0', '--no-color'];
     if (staged) args.push('--cached');
     const out = await GitProvider.exec(args, root);
-    const files = parseUnifiedDiff(out);
-    return files.filter((f) => f.hunks.length > 0).map((f) => ({ ...f, absPath: path.resolve(root, f.path) }));
+    const base = (await GitProvider.repoRoot(root)) ?? root;
+    const files = parseUnifiedDiff(out)
+      .filter((f) => f.hunks.length > 0)
+      .map((f) => ({ ...f, absPath: path.resolve(base, f.path) }));
+    if (staged) return files;
+    const untracked = await GitProvider.untrackedFiles(root, base);
+    return [...files, ...untracked];
+  }
+
+  /** Untracked (brand-new, e.g. AI-generated) files as whole-file additions. */
+  private static async untrackedFiles(startDir: string, base: string): Promise<DiffFile[]> {
+    let out: string;
+    try {
+      out = await GitProvider.exec(['ls-files', '--others', '--exclude-standard', '-z'], startDir);
+    } catch {
+      return [];
+    }
+    const files: DiffFile[] = [];
+    for (const p of out
+      .split('\0')
+      .map((s) => s.trim())
+      .filter((s) => s !== '')
+      .slice(0, MAX_UNTRACKED_FILES)) {
+      const abs = path.resolve(base, p);
+      try {
+        const stat = await fs.stat(abs);
+        if (!stat.isFile() || stat.size > MAX_UNTRACKED_BYTES) continue;
+        const text = await fs.readFile(abs, 'utf8');
+        if (text.slice(0, 8_000).includes('\0')) continue; // binary
+        files.push({ path: p, absPath: abs, status: 'A', hunks: [wholeFileHunk(text)] });
+      } catch {
+        continue;
+      }
+    }
+    return files;
   }
 }
 

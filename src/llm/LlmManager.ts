@@ -50,7 +50,7 @@ export class VscodeLmClient implements LlmClient {
 
   private listModels(): Promise<vscode.LanguageModelChat[]> {
     if (!this.modelsProbe) {
-      this.modelsProbe = (async () => {
+      const probe = (async () => {
         const lm = lmApi();
         if (!lm) return [];
         try {
@@ -66,6 +66,17 @@ export class VscodeLmClient implements LlmClient {
           return [];
         }
       })();
+      this.modelsProbe = probe;
+      // A cold-start probe (e.g. Copilot still signing in) must not poison the
+      // whole session — only successful, non-empty results stay cached.
+      void probe.then(
+        (models) => {
+          if (models.length === 0) this.modelsProbe = null;
+        },
+        () => {
+          this.modelsProbe = null;
+        },
+      );
     }
     return this.modelsProbe;
   }
@@ -79,9 +90,15 @@ export class VscodeLmClient implements LlmClient {
   }
 
   async complete(req: LlmCompleteRequest, token?: vscode.CancellationToken): Promise<string> {
-    const models = (await this.listModels()).filter((m) => !this.failed.has(m.id));
+    let models = (await this.listModels()).filter((m) => !this.failed.has(m.id));
+    if (models.length === 0) {
+      // Every model already failed this session (e.g. a transient sign-in
+      // hiccup blacklisted them all) — give them one fresh chance.
+      this.failed.clear();
+      models = await this.listModels();
+    }
     const ordered = this.rank(models);
-    if (ordered.length === 0) throw new Error('no usable VS Code language models (all candidates failed this session)');
+    if (ordered.length === 0) throw new Error('no usable VS Code language models');
 
     const errors: string[] = [];
     for (const model of ordered.slice(0, 12)) {
@@ -199,15 +216,16 @@ export class LlmManager {
         const user = buildUserPrompt(req, opts.maxSteps);
         let raw = await client.complete({ system, user, ...opts }, token);
         let plan: WalkthroughPlan;
+        const defaults = { maxSteps: opts.maxSteps, defaultFilePath: req.mode === 'selection' ? req.selection?.path : undefined };
         try {
-          plan = validateWalkthroughPlan(extractJson(raw), { maxSteps: opts.maxSteps });
+          plan = validateWalkthroughPlan(extractJson(raw), defaults);
         } catch (err) {
           if (err instanceof PlanValidationError) {
             raw = await client.complete(
               { system, user: buildRepairPrompt(raw, err.issues.map((i) => `${i.field}: ${i.message}`).join('; ')).slice(0, 2_000), ...opts },
               token,
             );
-            plan = validateWalkthroughPlan(extractJson(raw), { maxSteps: opts.maxSteps });
+            plan = validateWalkthroughPlan(extractJson(raw), defaults);
           } else {
             throw err;
           }

@@ -2,7 +2,7 @@
   "name": "bitvanes",
   "displayName": "BitVanes",
   "description": "Guided, step-by-step tours through diffs, AI-generated changes, and unfamiliar code — right inside VS Code.",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "publisher": "bitvanes",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "resources/icon.png",
@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/BitVanes/BitVanes/issues"
   },
-  "homepage": "https://bitvanes.github.io/BitVanes/",
+  "homepage": "https://bitvanes.com",
   "engines": {
     "vscode": "^1.95.0",
     "node": ">=20.0.0"
@@ -173,12 +173,12 @@
       {
         "key": "]",
         "command": "bitvanes.nextStep",
-        "when": "bitvanes.active && !editorTextFocus"
+        "when": "bitvanes.active && !editorTextFocus && !terminalFocus && !inQuickPick && !searchInputBoxFocus"
       },
       {
         "key": "[",
         "command": "bitvanes.prevStep",
-        "when": "bitvanes.active && !editorTextFocus"
+        "when": "bitvanes.active && !editorTextFocus && !terminalFocus && !inQuickPick && !searchInputBoxFocus"
       },
       {
         "key": "alt+]",
@@ -294,7 +294,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "node scripts/fetch-grammars.mjs --check && node esbuild.js --production",
     "compile": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
     "dev": "node esbuild.js",

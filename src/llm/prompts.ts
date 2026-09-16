@@ -13,6 +13,8 @@ export interface WalkthroughRequest {
   language: string | null;
   files: ContextFile[];
   selection?: { path: string; range: Range; note?: string };
+  /** How many changed files the prompt actually covers (truncation honesty). */
+  coverage?: { included: number; total: number };
 }
 
 const MAX_FILE_CHARS = 12_000;
@@ -33,7 +35,7 @@ interface WalkthroughPlan { summary: string; entryPoint: string; totalSteps: num
 COORDINATES:
 - All lines and columns are 1-based. range covers the exact statement or token span in the CURRENT file content provided to you (the new side of the diff).
 - scopeRange covers the enclosing function, method, or block that the step executes within.
-- endLine/endCol are inclusive. Use endCol = line length + 1 to mean end-of-line.
+- endLine is inclusive. endCol is exclusive: the 1-based column just past the last character of the span. To cover through the end of a line, use endCol = line length + 1.
 - filePath must be exactly one of the file paths given in the prompt.
 
 TRACING RULES — order steps by execution and data flow, not merely top-to-bottom:

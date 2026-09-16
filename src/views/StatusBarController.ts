@@ -1,11 +1,13 @@
 import * as vscode from 'vscode';
 import type { WalkthroughState } from '../director/EditorDirector';
+import { mdEscape, mdInline } from '../util/markdown';
 
 export class StatusBarController implements vscode.Disposable {
   private readonly prev: vscode.StatusBarItem;
   private readonly counter: vscode.StatusBarItem;
   private readonly next: vscode.StatusBarItem;
   private readonly autoplay: vscode.StatusBarItem;
+  private readonly exit: vscode.StatusBarItem;
   private autoplayRunning = false;
 
   constructor() {
@@ -31,6 +33,12 @@ export class StatusBarController implements vscode.Disposable {
     this.autoplay.text = '$(play)';
     this.autoplay.tooltip = 'BitVanes: toggle autoplay';
     this.autoplay.name = 'BitVanes';
+
+    this.exit = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+    this.exit.command = 'bitvanes.exitWalkthrough';
+    this.exit.text = '$(close)';
+    this.exit.tooltip = 'BitVanes: exit walkthrough (Esc)';
+    this.exit.name = 'BitVanes';
   }
 
   update(state: WalkthroughState | null): void {
@@ -40,13 +48,13 @@ export class StatusBarController implements vscode.Disposable {
     }
     this.counter.text = `BitVanes $(list-ordered) ${state.current + 1}/${state.plan.totalSteps}`;
     this.counter.tooltip = new vscode.MarkdownString(
-      `**${state.plan.summary.replace(/\n/g, ' ')}**\n\nEntry: \`${state.plan.entryPoint}\``,
-      true,
+      `**${mdEscape(state.plan.summary.replace(/\n/g, ' '))}**\n\nEntry: \`${mdInline(state.plan.entryPoint)}\``,
     );
     this.prev.show();
     this.counter.show();
     this.next.show();
     this.autoplay.show();
+    this.exit.show();
   }
 
   setAutoplay(running: boolean): void {
@@ -64,6 +72,7 @@ export class StatusBarController implements vscode.Disposable {
     this.counter.hide();
     this.next.hide();
     this.autoplay.hide();
+    this.exit.hide();
   }
 
   dispose(): void {
@@ -71,5 +80,6 @@ export class StatusBarController implements vscode.Disposable {
     this.counter.dispose();
     this.next.dispose();
     this.autoplay.dispose();
+    this.exit.dispose();
   }
 }
