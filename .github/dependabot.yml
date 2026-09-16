@@ -9,7 +9,7 @@ updates:
         applies-to: updates
         patterns: ['*']
   - package-ecosystem: npm
-    directory: /website
+    directory: /web
     schedule:
       interval: weekly
   - package-ecosystem: github-actions

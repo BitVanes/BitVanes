@@ -3,7 +3,7 @@
 src/**
 test/**
 scripts/**
-website/**
+web/**
 esbuild.js
 tsconfig.json
 vitest.config.ts

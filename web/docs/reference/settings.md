@@ -18,7 +18,7 @@ All settings live under `bitvanes.*` in `settings.json`.
 
 | Setting | Default | Description |
 |---|---|---|
-| `bitvanes.autoplay.intervalMs` | `6000` | Delay between autoplay steps (min 1000) |
+| `bitvanes.autoplay.intervalMs` | `4000` | Delay between autoplay steps (min 1000); manual navigation pauses autoplay |
 
 ## Editor
 
