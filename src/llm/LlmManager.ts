@@ -2,15 +2,11 @@ import * as vscode from 'vscode';
 import { PlanValidationError, validateWalkthroughPlan, type WalkthroughPlan } from '../types/protocol';
 import { extractJson } from './json';
 import { buildRepairPrompt, buildUserPrompt, SYSTEM_PROMPT, type WalkthroughRequest } from './prompts';
+import { OpenAiCompatibleClient, detectLocalModelServer, hostOf, type LlmCompleteRequest } from './openaiCompatible';
 
 export { extractJson } from './json';
-
-export interface LlmCompleteRequest {
-  system: string;
-  user: string;
-  maxTokens: number;
-  temperature: number;
-}
+export { OpenAiCompatibleClient, detectLocalModelServer } from './openaiCompatible';
+export type { LlmCompleteRequest } from './openaiCompatible';
 
 export interface LlmClient {
   readonly id: string;
@@ -88,7 +84,7 @@ export class VscodeLmClient implements LlmClient {
     if (ordered.length === 0) throw new Error('no usable VS Code language models (all candidates failed this session)');
 
     const errors: string[] = [];
-    for (const model of ordered.slice(0, 5)) {
+    for (const model of ordered.slice(0, 12)) {
       if (token?.isCancellationRequested) throw new Error('request cancelled');
       try {
         const out = await this.runOnce(model, req, token);
@@ -129,99 +125,6 @@ function preferenceScore(model: vscode.LanguageModelChat): number {
     if (MODEL_PREFERENCE[i]!.test(s)) return MODEL_PREFERENCE.length - i;
   }
   return 0;
-}
-
-export interface OpenAiCompatibleOptions {
-  label?: string;
-  baseUrl: string;
-  modelId: string;
-  getApiKey: () => Promise<string | undefined>;
-}
-
-export class OpenAiCompatibleClient implements LlmClient {
-  readonly id = 'openai-compatible';
-  readonly label: string;
-
-  constructor(private readonly opts: OpenAiCompatibleOptions) {
-    this.label = this.opts.label ?? `${this.opts.modelId} @ ${hostOf(this.opts.baseUrl)}`;
-  }
-
-  async available(): Promise<boolean> {
-    return this.opts.modelId.trim() !== '' && this.opts.baseUrl.trim() !== '';
-  }
-
-  async complete(req: LlmCompleteRequest, token?: vscode.CancellationToken): Promise<string> {
-    const url = `${this.opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-    const key = await this.opts.getApiKey();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (key) headers['Authorization'] = `Bearer ${key}`;
-    if (/anthropic/i.test(this.opts.baseUrl)) {
-      headers['anthropic-version'] = '2023-06-01';
-      if (key) headers['x-api-key'] = key;
-    }
-
-    const abort = new AbortController();
-    const sub = token?.onCancellationRequested(() => abort.abort());
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        signal: abort.signal,
-        body: JSON.stringify({
-          model: this.opts.modelId,
-          messages: [
-            { role: 'system', content: req.system },
-            { role: 'user', content: req.user },
-          ],
-          temperature: req.temperature,
-          max_tokens: req.maxTokens,
-          stream: false,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status} from ${hostOf(this.opts.baseUrl)}: ${body.slice(0, 300)}`);
-      }
-      const json = (await res.json()) as {
-        choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>;
-      };
-      const content = json.choices?.[0]?.message?.content;
-      if (typeof content === 'string') return content;
-      if (Array.isArray(content)) return content.map((c) => c.text ?? '').join('');
-      throw new Error('response contained no message content');
-    } finally {
-      sub?.dispose();
-    }
-  }
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
-
-const LOCAL_ENDPOINTS = [
-  { url: 'http://localhost:11434/v1', label: 'Ollama' },
-  { url: 'http://localhost:1234/v1', label: 'LM Studio' },
-  { url: 'http://localhost:8000/v1', label: 'vLLM' },
-];
-
-async function detectLocalModelServer(): Promise<{ url: string; label: string; modelId: string } | null> {
-  for (const ep of LOCAL_ENDPOINTS) {
-    try {
-      const res = await fetch(`${ep.url}/models`, { signal: AbortSignal.timeout(1_500) });
-      if (!res.ok) continue;
-      const json = (await res.json()) as { data?: Array<{ id?: string }> };
-      const modelId = json.data?.find((m) => m.id)?.id;
-      if (modelId) return { url: ep.url, label: ep.label, modelId };
-    } catch {
-      continue;
-    }
-  }
-  return null;
 }
 
 export class LlmManager {
