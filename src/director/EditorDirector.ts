@@ -13,6 +13,7 @@ export class EditorDirector implements vscode.Disposable {
   private spotlight?: vscode.TextEditorDecorationType;
   private dim?: vscode.TextEditorDecorationType;
   private scope?: vscode.TextEditorDecorationType;
+  private chip?: vscode.TextEditorDecorationType;
   private plan?: WalkthroughPlan;
   private current = -1;
 
@@ -106,8 +107,29 @@ export class EditorDirector implements vscode.Disposable {
       e.setDecorations(this.spotlight!, []);
       e.setDecorations(this.dim!, []);
       e.setDecorations(this.scope!, []);
+      e.setDecorations(this.chip!, []);
     }
     editor.setDecorations(this.spotlight!, [{ range: vsRange, hoverMessage: this.stepHover(step) }]);
+
+    const chipText = step.variable
+      ? ` ← ${step.variable.name}${
+          step.variable.stateBefore !== undefined || step.variable.stateAfter !== undefined
+            ? `: ${shorten(step.variable.stateBefore ?? '?')} → ${shorten(step.variable.stateAfter ?? '?')}`
+            : ''
+        }${step.securityNote ? ' ⚠' : ''}`
+      : step.securityNote
+        ? ' ← ⚠ see security note'
+        : undefined;
+    if (chipText) {
+      editor.setDecorations(this.chip!, [
+        {
+          range: new vscode.Range(vsRange.end.line, vsRange.end.character, vsRange.end.line, vsRange.end.character),
+          renderOptions: { after: { contentText: chipText } },
+        },
+      ]);
+    } else {
+      editor.setDecorations(this.chip!, []);
+    }
 
     const focus = scopeVs ?? vsRange;
     const doc = editor.document;
@@ -172,6 +194,7 @@ export class EditorDirector implements vscode.Disposable {
       e.setDecorations(this.spotlight!, []);
       e.setDecorations(this.dim!, []);
       e.setDecorations(this.scope!, []);
+      e.setDecorations(this.chip!, []);
     }
   }
 
@@ -213,6 +236,12 @@ export class EditorDirector implements vscode.Disposable {
       borderColor: 'var(--vscode-widget-border)',
       borderRadius: '4px',
     });
+    this.chip = vscode.window.createTextEditorDecorationType({
+      after: {
+        fontStyle: 'italic',
+        color: 'var(--vscode-editorInfo-foreground)',
+      },
+    });
     if (this.plan && this.current >= 0) {
       this.reapply();
     }
@@ -223,9 +252,15 @@ export class EditorDirector implements vscode.Disposable {
     this.spotlight?.dispose();
     this.dim?.dispose();
     this.scope?.dispose();
+    this.chip?.dispose();
     this._onDidChangeState.dispose();
     for (const d of this.disposables) d.dispose();
   }
+}
+
+function shorten(v: string): string {
+  const t = v.replace(/\n/g, ' ').trim();
+  return t.length > 32 ? `${t.slice(0, 31)}…` : t;
 }
 
 function toVsRange(r: { startLine: number; startCol: number; endLine: number; endCol: number }, doc: vscode.TextDocument): vscode.Range {

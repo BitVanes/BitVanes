@@ -2,7 +2,7 @@
   "name": "bitvanes",
   "displayName": "BitVanes",
   "description": "Interactive AST & data-flow walkthroughs for diffs and code paths — AI-guided, in-editor.",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "publisher": "bitvanes",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "resources/icon.png",
@@ -56,6 +56,11 @@
       {
         "command": "bitvanes.walkthroughSelection",
         "title": "Walkthrough Code Path at Cursor",
+        "category": "BitVanes"
+      },
+      {
+        "command": "bitvanes.walkthroughInstant",
+        "title": "Instant Walkthrough of Changes (No AI)",
         "category": "BitVanes"
       },
       {
@@ -119,7 +124,7 @@
     "viewsWelcome": [
       {
         "view": "bitvanes.stepsView",
-        "contents": "No walkthrough running.\n[Walkthrough Working Tree Changes](command:bitvanes.walkthroughDiff)\n[Walkthrough Code Path at Cursor](command:bitvanes.walkthroughSelection)\nTo review staged changes, open the Source Control view and use the BitVanes actions."
+        "contents": "No walkthrough running.\n[Walkthrough Working Tree Changes](command:bitvanes.walkthroughDiff)\n[Instant Walkthrough — local, no AI](command:bitvanes.walkthroughInstant)\n[Walkthrough Code Path at Cursor](command:bitvanes.walkthroughSelection)"
       }
     ],
     "menus": {
@@ -163,10 +168,20 @@
       {
         "key": "]",
         "command": "bitvanes.nextStep",
-        "when": "bitvanes.active"
+        "when": "bitvanes.active && !editorTextFocus"
       },
       {
         "key": "[",
+        "command": "bitvanes.prevStep",
+        "when": "bitvanes.active && !editorTextFocus"
+      },
+      {
+        "key": "alt+]",
+        "command": "bitvanes.nextStep",
+        "when": "bitvanes.active"
+      },
+      {
+        "key": "alt+[",
         "command": "bitvanes.prevStep",
         "when": "bitvanes.active"
       },
@@ -234,7 +249,7 @@
         },
         "bitvanes.autoplay.intervalMs": {
           "type": "number",
-          "default": 6000,
+          "default": 4000,
           "minimum": 1000,
           "maximum": 60000,
           "description": "Delay between steps during autoplay."
