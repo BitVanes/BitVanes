@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildDiffRequest, buildSelectionRequest, mergeWindows, refinePlanRanges } from '../src/pipeline/contextBuilder';
 import { TreeSitterResolver } from '../src/ast/TreeSitterResolver';
-import { SYSTEM_PROMPT, buildUserPrompt, formatAstSummary } from '../src/llm/prompts';
+import { SYSTEM_PROMPT, buildSystemPrompt, buildUserPrompt, formatAstSummary } from '../src/llm/prompts';
 import type { DiffFile } from '../src/git/pure';
 import type { SelectionTarget } from '../src/git/GitProvider';
 
@@ -111,6 +111,21 @@ describe('prompts', () => {
     expect(SYSTEM_PROMPT).toContain('WalkthroughPlan');
     expect(SYSTEM_PROMPT).toContain('1-based');
     expect(SYSTEM_PROMPT).toContain('single JSON object');
+  });
+
+  it('tailors the system prompt per audience style', () => {
+    const expert = buildSystemPrompt('expert');
+    const standard = buildSystemPrompt('standard');
+    const learner = buildSystemPrompt('learner');
+    expect(expert).toContain('senior engineer');
+    expect(expert).toContain('Never explain language syntax');
+    expect(learner).toContain('AI-generated code');
+    expect(learner).toContain('Define jargon');
+    expect(standard).toContain('working developer');
+    expect(new Set([expert, standard, learner]).size).toBe(3);
+    for (const s of [expert, standard, learner]) {
+      expect(s).toContain('WalkthroughPlan');
+    }
   });
 
   it('orders the selection file first and includes line numbers', () => {

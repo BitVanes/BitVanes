@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { PlanValidationError, validateWalkthroughPlan, type WalkthroughPlan } from '../types/protocol';
 import { extractJson } from './json';
-import { buildRepairPrompt, buildUserPrompt, SYSTEM_PROMPT, type WalkthroughRequest } from './prompts';
+import { buildRepairPrompt, buildUserPrompt, buildSystemPrompt, type WalkthroughRequest, type WalkthroughStyle } from './prompts';
 import { OpenAiCompatibleClient, detectLocalModelServer, hostOf, type LlmCompleteRequest } from './openaiCompatible';
 
 export { extractJson } from './json';
@@ -186,24 +186,25 @@ export class LlmManager {
 
   async generatePlan(
     req: WalkthroughRequest,
-    opts: { maxSteps: number; maxTokens: number; temperature: number },
+    opts: { maxSteps: number; maxTokens: number; temperature: number; style?: WalkthroughStyle },
     token?: vscode.CancellationToken,
   ): Promise<{ plan: WalkthroughPlan; provider: string }> {
     const chain = await this.buildChain();
     const failures: string[] = [];
     let sawModelNotSupported = false;
+    const system = buildSystemPrompt(opts.style ?? 'standard');
 
     for (const client of chain) {
       try {
         const user = buildUserPrompt(req, opts.maxSteps);
-        let raw = await client.complete({ system: SYSTEM_PROMPT, user, ...opts }, token);
+        let raw = await client.complete({ system, user, ...opts }, token);
         let plan: WalkthroughPlan;
         try {
           plan = validateWalkthroughPlan(extractJson(raw), { maxSteps: opts.maxSteps });
         } catch (err) {
           if (err instanceof PlanValidationError) {
             raw = await client.complete(
-              { system: SYSTEM_PROMPT, user: buildRepairPrompt(raw, err.issues.map((i) => `${i.field}: ${i.message}`).join('; ')).slice(0, 2_000), ...opts },
+              { system, user: buildRepairPrompt(raw, err.issues.map((i) => `${i.field}: ${i.message}`).join('; ')).slice(0, 2_000), ...opts },
               token,
             );
             plan = validateWalkthroughPlan(extractJson(raw), { maxSteps: opts.maxSteps });

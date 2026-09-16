@@ -1,8 +1,10 @@
 # BitVanes
 
-**Turn diffs and code paths into an interactive, AI-guided walkthrough — right inside your editor.**
+**A guided tour through code you didn't write — diffs, AI-generated changes, or any function you want to understand.**
 
-BitVanes parses your pending changes (or any selected function) into syntax trees, asks a language model to trace the execution and data flow, and plays the result back as synchronized steps in your editor: the active statement spotlighted, everything else dimmed, and variable transitions explained as you step through.
+BitVanes parses your pending changes (or any selected function) into syntax trees, asks a language model to trace the execution and data flow, and plays the result back as synchronized steps in your editor: the active statement spotlighted, everything else dimmed, and variable transitions explained as you step.
+
+Two audiences, one tool: seasoned engineers use it to burn through review diffs quickly; vibe coders use it to finally understand the code their AI just wrote. Pick your depth with **BitVanes: Set Walkthrough Style** — `Expert` (terse, risk-focused), `Standard`, or `Learner` (plain language, syntax explained, jargon defined).
 
 Built for reviewing exactly the kind of code where being wrong is expensive — smart-contract engines, consensus paths, auth flows, migrations — but useful for any change you want to *understand*, not just *read*.
 
@@ -41,6 +43,7 @@ Built for reviewing exactly the kind of code where being wrong is expensive — 
 | `BitVanes: Next / Previous Step` | Transport — `alt+]` / `alt+[` anywhere; bare `]` / `[` when not typing in the editor |
 | `BitVanes: Browse Steps & Explanations` | QuickPick browser with full narratives, state transitions, and security notes |
 | `BitVanes: Toggle Autoplay` | Auto-advance through the plan (manual navigation pauses it) |
+| `BitVanes: Set Walkthrough Style` | Audience tuning: Expert / Standard / Learner |
 
 ## Security model
 

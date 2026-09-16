@@ -1,8 +1,8 @@
 {
   "name": "bitvanes",
   "displayName": "BitVanes",
-  "description": "Interactive AST & data-flow walkthroughs for diffs and code paths — AI-guided, in-editor.",
-  "version": "0.2.0",
+  "description": "Guided, step-by-step tours through diffs, AI-generated changes, and unfamiliar code — right inside VS Code.",
+  "version": "0.3.0",
   "publisher": "bitvanes",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "resources/icon.png",
@@ -89,6 +89,11 @@
         "category": "BitVanes"
       },
       {
+        "command": "bitvanes.setStyle",
+        "title": "Set Walkthrough Style",
+        "category": "BitVanes"
+      },
+      {
         "command": "bitvanes.exitWalkthrough",
         "title": "Exit Walkthrough",
         "category": "BitVanes"
@@ -153,6 +158,11 @@
           "group": "navigation"
         },
         {
+          "command": "bitvanes.setStyle",
+          "when": "view == bitvanes.stepsView",
+          "group": "style"
+        },
+        {
           "command": "bitvanes.toggleAutoplay",
           "when": "view == bitvanes.stepsView && bitvanes.active",
           "group": "navigation"
@@ -194,6 +204,21 @@
     "configuration": {
       "title": "BitVanes",
       "properties": {
+        "bitvanes.walkthrough.style": {
+          "type": "string",
+          "enum": [
+            "expert",
+            "standard",
+            "learner"
+          ],
+          "enumDescriptions": [
+            "Senior engineers: terse, high-signal explanations, no syntax lessons, focus on invariants and risk",
+            "Working developers: balanced explanations of what the code does and why",
+            "New developers and vibe coders: plain language, syntax explained on first use, jargon defined"
+          ],
+          "default": "standard",
+          "description": "Audience the walkthrough explanations are tuned for. Applies to AI walkthroughs (instant mode is unaffected)."
+        },
         "bitvanes.llm.provider": {
           "type": "string",
           "enum": [

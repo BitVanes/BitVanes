@@ -5,6 +5,7 @@ import { TreeSitterResolver } from './ast/TreeSitterResolver';
 import { EditorDirector } from './director/EditorDirector';
 import { GitProvider, getActiveSelection } from './git/GitProvider';
 import { LlmManager } from './llm/LlmManager';
+import type { WalkthroughStyle } from './llm/prompts';
 import { PlanValidationError } from './types/protocol';
 import { buildDiffRequest, buildSelectionRequest, refinePlanRanges } from './pipeline/contextBuilder';
 import { buildLocalPlan } from './pipeline/localPlan';
@@ -13,6 +14,10 @@ import { StatusBarController } from './views/StatusBarController';
 import { toDisplayPath } from './util/text';
 
 class UserError extends Error {}
+
+function normalizeStyle(v: unknown): WalkthroughStyle {
+  return v === 'expert' || v === 'learner' ? v : 'standard';
+}
 
 let director: EditorDirector | undefined;
 let autoplayTimer: ReturnType<typeof setInterval> | null = null;
@@ -121,12 +126,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
           progress.report({ message: 'asking the model…' });
           const cfg = vscode.workspace.getConfiguration('bitvanes.llm');
+          const style = normalizeStyle(vscode.workspace.getConfiguration('bitvanes.walkthrough').get<string>('style'));
           const { plan, provider } = await llm.generatePlan(
             request,
             {
               maxSteps: cfg.get('maxSteps', 12),
               maxTokens: cfg.get('maxTokens', 4096),
               temperature: cfg.get('temperature', 0.2),
+              style,
             },
             token,
           );
@@ -162,6 +169,21 @@ export function activate(context: vscode.ExtensionContext): void {
   register('bitvanes.walkthroughStagedDiff', () => runPipeline('staged'));
   register('bitvanes.walkthroughSelection', () => runPipeline('selection'));
   register('bitvanes.walkthroughInstant', () => runPipeline('instant'));
+  register('bitvanes.setStyle', async () => {
+    const styles: Array<{ id: WalkthroughStyle; label: string; description: string }> = [
+      { id: 'expert', label: 'Expert', description: 'Senior engineers — terse, high-signal, invariants and risk only' },
+      { id: 'standard', label: 'Standard', description: 'Working developers — what the code does and why' },
+      { id: 'learner', label: 'Learner', description: 'New devs & vibe coders — plain language, syntax explained, jargon defined' },
+    ];
+    const current = normalizeStyle(vscode.workspace.getConfiguration('bitvanes.walkthrough').get<string>('style'));
+    const picked = await vscode.window.showQuickPick(
+      styles.map((s) => ({ ...s, label: `${s.id === current ? '$(check) ' : ''}${s.label}`, description: s.description })),
+      { placeHolder: 'Who is the walkthrough for?' },
+    );
+    if (!picked) return;
+    await vscode.workspace.getConfiguration('bitvanes.walkthrough').update('style', picked.id, vscode.ConfigurationTarget.Global);
+    void vscode.window.showInformationMessage(`BitVanes: walkthrough style set to ${picked.label}.`);
+  });
   register('bitvanes.nextStep', () => {
     stopAutoplay();
     director?.next();

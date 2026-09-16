@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress';
 
 export default defineConfig({
   title: 'BitVanes',
-  description: 'Interactive AST & data-flow walkthroughs for diffs and code paths — AI-guided, in-editor.',
+  description: 'Guided, step-by-step tours through diffs, AI-generated changes, and unfamiliar code — right inside VS Code.',
   head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }]],
   themeConfig: {
     nav: [

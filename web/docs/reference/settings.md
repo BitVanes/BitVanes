@@ -2,6 +2,12 @@
 
 All settings live under `bitvanes.*` in `settings.json`.
 
+## Walkthrough
+
+| Setting | Default | Description |
+|---|---|---|
+| `bitvanes.walkthrough.style` | `standard` | Audience tuning for AI walkthrough explanations: `expert` (terse, high-signal, risk-focused), `standard` (what + why), `learner` (plain language, syntax explained, jargon defined). Instant mode is unaffected |
+
 ## Model
 
 | Setting | Default | Description |

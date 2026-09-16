@@ -14,5 +14,6 @@ All commands live under the **BitVanes** category in the Command Palette.
 | Browse Steps & Explanations | `bitvanes.explainStep` | QuickPick browser over all steps with full narratives |
 | Toggle Autoplay | `bitvanes.toggleAutoplay` | Start/stop auto-advancing playback |
 | Exit Walkthrough | `bitvanes.exitWalkthrough` | Clear decorations and end the session (`Esc` from the editor) |
+| Set Walkthrough Style | `bitvanes.setStyle` | Pick the audience — Expert / Standard / Learner — for AI walkthrough explanations |
 | Set API Key for External LLM Provider | `bitvanes.setApiKey` | Store a provider key in SecretStorage and point the config at it |
 | Delete Stored API Key | `bitvanes.clearApiKey` | Remove a stored key |

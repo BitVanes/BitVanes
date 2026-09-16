@@ -47,6 +47,32 @@ SECURITY NOTES — set "securityNote" (1-2 factual sentences) when a step involv
 
 STYLE: summary is 1-2 sentences describing what the change/path does. entryPoint names the function or file where the flow begins. Titles are imperative, 3-8 words, e.g. "Validate signature before debit". Explanations are 1-3 sentences written for a senior engineer reading code for the first time.`;
 
+export type WalkthroughStyle = 'expert' | 'standard' | 'learner';
+
+const STYLE_DIRECTIVES: Record<WalkthroughStyle, string> = {
+  expert: `## Audience: Expert
+The reader is a senior engineer fluent in this language and its ecosystem.
+- Titles: 2-5 words. Explanations: one dense, high-signal sentence.
+- Never explain language syntax, standard library calls, or common idioms.
+- Focus on intent, invariants, ordering/concurrency, edge cases, and risk.
+- securityNote must be precise and actionable — name the exact condition under which it bites.`,
+  standard: `## Audience: Standard
+The reader is a working developer competent in this language but new to this code.
+- Titles: 3-8 words. Explanations: 1-3 sentences.
+- Explain what the code does and why it exists in the flow. Skip syntax lessons.`,
+  learner: `## Audience: Learner
+The reader may be new to programming, or reviewing AI-generated code they did not write and do not fully understand.
+- Explanations: 2-4 sentences in plain language.
+- The first time a non-obvious construct appears (operator, decorator, pattern match, language-specific idiom), explain it in a short clause.
+- Define jargon on first use.
+- Explain why the pattern is used, not just what happens.
+- Neutral, respectful tone — never condescending.`,
+};
+
+export function buildSystemPrompt(style: WalkthroughStyle = 'standard'): string {
+  return `${SYSTEM_PROMPT}\n\n${STYLE_DIRECTIVES[style] ?? STYLE_DIRECTIVES.standard}`;
+}
+
 export function buildUserPrompt(req: WalkthroughRequest, maxSteps: number): string {
   const parts: string[] = [];
   parts.push(`## Task`);
