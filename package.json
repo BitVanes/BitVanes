@@ -2,7 +2,7 @@
   "name": "bitvanes",
   "displayName": "BitVanes",
   "description": "Interactive AST & data-flow walkthroughs for diffs and code paths — AI-guided, in-editor.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "bitvanes",
   "license": "SEE LICENSE IN LICENSE.md",
   "icon": "resources/icon.png",

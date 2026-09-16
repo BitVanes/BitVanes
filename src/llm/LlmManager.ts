@@ -203,6 +203,27 @@ function hostOf(url: string): string {
   }
 }
 
+const LOCAL_ENDPOINTS = [
+  { url: 'http://localhost:11434/v1', label: 'Ollama' },
+  { url: 'http://localhost:1234/v1', label: 'LM Studio' },
+  { url: 'http://localhost:8000/v1', label: 'vLLM' },
+];
+
+async function detectLocalModelServer(): Promise<{ url: string; label: string; modelId: string } | null> {
+  for (const ep of LOCAL_ENDPOINTS) {
+    try {
+      const res = await fetch(`${ep.url}/models`, { signal: AbortSignal.timeout(1_500) });
+      if (!res.ok) continue;
+      const json = (await res.json()) as { data?: Array<{ id?: string }> };
+      const modelId = json.data?.find((m) => m.id)?.id;
+      if (modelId) return { url: ep.url, label: ep.label, modelId };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 export class LlmManager {
   private lmClient: VscodeLmClient | null = null;
 
@@ -225,17 +246,36 @@ export class LlmManager {
     if (provider === 'auto' || provider === 'openai-compatible') {
       const baseUrl = cfg.get<string>('baseUrl', '');
       const modelId = cfg.get<string>('modelId', '');
-      const client = new OpenAiCompatibleClient({
-        baseUrl,
-        modelId,
-        getApiKey: () => this.getApiKey(hostOf(baseUrl)),
-      });
-      if (await client.available()) chain.push(client);
+      if (baseUrl && modelId) {
+        chain.push(
+          new OpenAiCompatibleClient({
+            baseUrl,
+            modelId,
+            getApiKey: () => this.getApiKey(hostOf(baseUrl)),
+          }),
+        );
+      } else if (provider === 'openai-compatible') {
+        throw new Error(
+          'Set bitvanes.llm.baseUrl and bitvanes.llm.modelId (e.g. Ollama: http://localhost:11434/v1 + qwen2.5-coder:14b), or run "BitVanes: Set API Key".',
+        );
+      } else {
+        const local = await detectLocalModelServer();
+        if (local) {
+          chain.push(
+            new OpenAiCompatibleClient({
+              label: `${local.label} (auto-detected: ${local.modelId})`,
+              baseUrl: local.url,
+              modelId: local.modelId,
+              getApiKey: () => Promise.resolve(undefined),
+            }),
+          );
+        }
+      }
     }
 
     if (chain.length === 0) {
       throw new Error(
-        'No language model configured. Use the VS Code Copilot extension, or set bitvanes.llm.modelId and bitvanes.llm.baseUrl (e.g. Ollama at http://localhost:11434/v1).',
+        'No language model configured. Options: (1) sign in to GitHub Copilot, (2) start Ollama/LM Studio/vLLM locally, or (3) run "BitVanes: Set API Key" for a hosted provider.',
       );
     }
     return chain;
@@ -248,6 +288,7 @@ export class LlmManager {
   ): Promise<{ plan: WalkthroughPlan; provider: string }> {
     const chain = await this.buildChain();
     const failures: string[] = [];
+    let sawModelNotSupported = false;
 
     for (const client of chain) {
       try {
@@ -271,9 +312,17 @@ export class LlmManager {
       } catch (err) {
         if (token?.isCancellationRequested) throw new Error('Walkthrough generation cancelled');
         failures.push(`${client.label}: ${err instanceof Error ? err.message : String(err)}`);
+        if (/model_not_supported/.test(err instanceof Error ? err.message : String(err))) {
+          sawModelNotSupported = true;
+        }
       }
     }
-    throw new Error(`All model providers failed.\n${failures.join('\n')}`);
+    let message = `All model providers failed.\n${failures.join('\n')}`;
+    if (sawModelNotSupported) {
+      message +=
+        '\n\nCopilot rejected every model. Most common cause: the Copilot Language Model API only serves Marketplace-published extensions and Extension Development Host sessions — a VSIX-installed extension is not allow-listed. Either: (1) launch a dev window with `code --extensionDevelopmentPath=<this extension folder>`, (2) start a local model (e.g. `ollama serve` — BitVanes auto-detects it), or (3) run "BitVanes: Set API Key" for a hosted provider.';
+    }
+    throw new Error(message);
   }
 
   async setApiKey(origin: string, key: string): Promise<void> {
