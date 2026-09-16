@@ -34,12 +34,13 @@ Built for reviewing exactly the kind of code where being wrong is expensive — 
 
 | Command | What it does |
 |---|---|
-| `BitVanes: Walkthrough Working Tree Changes` | Walk the unstaged diff |
-| `BitVanes: Walkthrough Staged Changes` | Walk the staged diff (also in the Source Control title menu) |
+| `BitVanes: Instant Walkthrough of Changes (No AI)` | Sub-second local walkthrough from AST analysis — no model, works offline |
+| `BitVanes: Walkthrough Working Tree Changes` | AI walkthrough of the unstaged diff |
+| `BitVanes: Walkthrough Staged Changes` | AI walkthrough of the staged diff (also in the Source Control title menu) |
 | `BitVanes: Walkthrough Code Path at Cursor` | Trace the function under the cursor — no git needed |
-| `BitVanes: Next / Previous Step` | Transport (`]` / `[` while a walkthrough is active) |
+| `BitVanes: Next / Previous Step` | Transport — `alt+]` / `alt+[` anywhere; bare `]` / `[` when not typing in the editor |
 | `BitVanes: Browse Steps & Explanations` | QuickPick browser with full narratives, state transitions, and security notes |
-| `BitVanes: Toggle Autoplay` | Auto-advance through the plan |
+| `BitVanes: Toggle Autoplay` | Auto-advance through the plan (manual navigation pauses it) |
 
 ## Security model
 

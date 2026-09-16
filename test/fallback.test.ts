@@ -28,8 +28,11 @@ describe('extractFallbackNodes', () => {
   });
 
   it('finds assignments and mutations', () => {
-    const assigns = nodes.filter((n) => n.category === 'assignment');
-    expect(assigns.some((n) => n.text.startsWith('before ='))).toBe(true);
+    const all = extractFallbackNodes(RUST);
+    const assigns = all.filter((n) => n.category === 'assignment');
+    const decls = all.filter((n) => n.category === 'declaration');
+    expect(decls.some((n) => n.text.startsWith('before ='))).toBe(true);
+    expect(assigns.some((n) => n.text.startsWith('from.balance'))).toBe(true);
     expect(assigns.some((n) => n.text.startsWith('from.total'))).toBe(true);
   });
 

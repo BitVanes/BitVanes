@@ -7,6 +7,7 @@ import { GitProvider, getActiveSelection } from './git/GitProvider';
 import { LlmManager } from './llm/LlmManager';
 import { PlanValidationError } from './types/protocol';
 import { buildDiffRequest, buildSelectionRequest, refinePlanRanges } from './pipeline/contextBuilder';
+import { buildLocalPlan } from './pipeline/localPlan';
 import { StepsTreeProvider } from './views/StepsTreeProvider';
 import { StatusBarController } from './views/StatusBarController';
 import { toDisplayPath } from './util/text';
@@ -57,6 +58,9 @@ export function activate(context: vscode.ExtensionContext): void {
   director.onDidChangeState((st) => {
     tree.update(st);
     statusbar.update(st);
+    treeView.message = st
+      ? `Step ${st.current + 1} of ${st.plan.totalSteps} — ${st.plan.summary.replace(/\n/g, ' ').slice(0, 90)}`
+      : undefined;
     if (st) {
       const node = tree.findStepNode(st.current);
       if (node) {
@@ -69,18 +73,41 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const readText = (absPath: string) => fs.readFile(absPath, 'utf8');
 
-  const runPipeline = async (kind: 'diff' | 'staged' | 'selection') => {
+  const runPipeline = async (kind: 'diff' | 'staged' | 'selection' | 'instant') => {
+    const t0 = Date.now();
     try {
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, cancellable: true, title: 'BitVanes: generating walkthrough…' },
         async (progress, token) => {
+          const root = GitProvider.workspaceRoot();
+
+          if (kind === 'instant') {
+            if (!root) throw new UserError('Open a folder to walkthrough its changes.');
+            progress.report({ message: 'reading diff…' });
+            const files = await GitProvider.diff(root, false);
+            if (files.length === 0) throw new UserError('No working-tree changes to walkthrough.');
+            progress.report({ message: 'analyzing syntax trees…' });
+            const plan = await buildLocalPlan(
+              files,
+              resolver,
+              readText,
+              root,
+              vscode.workspace.getConfiguration('bitvanes.llm').get('maxSteps', 12),
+            );
+            director?.start(plan);
+            const secs = ((Date.now() - t0) / 1000).toFixed(1);
+            void vscode.window.showInformationMessage(
+              `BitVanes: ${plan.totalSteps}-step instant walkthrough in ${secs}s (local, no model).`,
+            );
+            return;
+          }
+
           let request;
           if (kind === 'selection') {
             const sel = getActiveSelection();
             if (!sel) throw new UserError('Open a file and place the cursor in (or select) the code to walkthrough.');
             request = await buildSelectionRequest(sel, resolver);
           } else {
-            const root = GitProvider.workspaceRoot();
             if (!root) throw new UserError('Open a folder to walkthrough its changes.');
             if (!(await GitProvider.isGitRepo(root))) throw new UserError('This workspace is not a Git repository.');
             progress.report({ message: 'reading diff…' });
@@ -104,15 +131,15 @@ export function activate(context: vscode.ExtensionContext): void {
             token,
           );
 
-          const root = GitProvider.workspaceRoot();
           if (root) {
+            progress.report({ message: 'aligning steps to syntax…' });
             await refinePlanRanges(plan, resolver, root, readText);
           }
 
           director?.start(plan);
-          void vscode.commands.executeCommand('bitvanes.stepsView.focus');
+          const secs = ((Date.now() - t0) / 1000).toFixed(1);
           void vscode.window.showInformationMessage(
-            `BitVanes: ${plan.totalSteps}-step walkthrough ready via ${provider}. Hover the highlighted code or press ] to step through.`,
+            `BitVanes: ${plan.totalSteps}-step walkthrough in ${secs}s via ${provider}. Hover the highlight or press alt+] to step.`,
           );
         },
       );
@@ -134,11 +161,22 @@ export function activate(context: vscode.ExtensionContext): void {
   register('bitvanes.walkthroughDiff', () => runPipeline('diff'));
   register('bitvanes.walkthroughStagedDiff', () => runPipeline('staged'));
   register('bitvanes.walkthroughSelection', () => runPipeline('selection'));
-  register('bitvanes.nextStep', () => director?.next());
-  register('bitvanes.prevStep', () => director?.prev());
+  register('bitvanes.walkthroughInstant', () => runPipeline('instant'));
+  register('bitvanes.nextStep', () => {
+    stopAutoplay();
+    director?.next();
+  });
+  register('bitvanes.prevStep', () => {
+    stopAutoplay();
+    director?.prev();
+  });
   register('bitvanes.jumpToStep', (index?: unknown) => {
-    if (typeof index === 'number') director?.jump(index);
-    else void browseSteps();
+    if (typeof index === 'number') {
+      stopAutoplay();
+      director?.jump(index);
+    } else {
+      void browseSteps();
+    }
   });
   register('bitvanes.explainStep', () => browseSteps());
   register('bitvanes.toggleAutoplay', () => {

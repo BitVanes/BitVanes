@@ -70,7 +70,15 @@ export function extractFallbackNodes(source: string): FallbackNode[] {
     if (assign) {
       const name = assign[2] ?? assign[1];
       if (name && !RESERVED.has(name)) {
-        nodes.push({ category: 'assignment', text: `${name} = …`, startLine: ln, endLine: ln, startCol, endCol });
+        const isDecl = /^\s*(?:let|var|const|mut)\s+[A-Za-z_]/.test(line);
+        nodes.push({
+          category: isDecl ? 'declaration' : 'assignment',
+          text: `${name} = …`,
+          startLine: ln,
+          endLine: ln,
+          startCol,
+          endCol,
+        });
       }
     }
 
