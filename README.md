@@ -1,6 +1,6 @@
 # BitVanes
 
-**A guided tour through code you didn't write — diffs, AI-generated changes, or any function you want to understand.**
+**Ai guided code tour — diffs, AI-generated changes, or any function you want to understand.**
 
 BitVanes parses your pending changes (or any selected function) into syntax trees, asks a language model to trace the execution and data flow, and plays the result back as synchronized steps in your editor: the active statement spotlighted, everything else dimmed, and variable transitions explained as you step.
 
